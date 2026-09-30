@@ -4,8 +4,9 @@
 int main()
 {
     sf::RenderWindow window(
-        sf::VideoMode(1000, 700),
-        "Simple Laser"
+        sf::VideoMode({1000, 700}),
+        "Simple Laser",
+        sf::Style::Titlebar | sf::Style::Close
     );
 
     window.setFramerateLimit(60);
@@ -16,12 +17,12 @@ int main()
     bool followMouse = true;
 
     sf::CircleShape source(6.f);
-    source.setOrigin(6.f, 6.f);
+    source.setOrigin({6.f, 6.f});
     source.setPosition(laserPosition);
     source.setFillColor(sf::Color::Red);
     sf::RectangleShape followButton(sf::Vector2f(100.f, 50.f));
 
-    followButton.setPosition(1000.f / 2.f - 50.f, 20.f);
+    followButton.setPosition({1000.f / 2.f - 50.f, 20.f});
     followButton.setFillColor(sf::Color::Green);
 
     followButton.setOutlineThickness(2.f);
@@ -30,20 +31,18 @@ int main()
     while (window.isOpen())
     {
         // Handle events
-        sf::Event event;
-
-        while (window.pollEvent(event))
+        while (const auto event = window.pollEvent())
         {
-            if (event.type == sf::Event::Closed)
+            if (event->is<sf::Event::Closed>())
             {
                 window.close();
             }
 
-            if(event.type == sf::Event::MouseButtonPressed) 
+            if (const auto* mouseButton = event->getIf<sf::Event::MouseButtonPressed>())
             {
-                if(event.mouseButton.button == sf::Mouse::Left) 
+                if (mouseButton->button == sf::Mouse::Button::Left)
                 {
-                    sf::Vector2f clickPosition = window.mapPixelToCoords(sf::Vector2i(event.mouseButton.x, event.mouseButton.y));
+                    sf::Vector2f clickPosition = window.mapPixelToCoords(mouseButton->position);
 
                     if(followButton.getGlobalBounds().contains(clickPosition)) 
                     {
@@ -59,6 +58,11 @@ int main()
                     }
                 }
             }
+        }
+
+        if (!window.isOpen())
+        {
+            break;
         }
 
         if(followMouse)
@@ -80,15 +84,15 @@ int main()
         // Create the laser beam
         sf::Vertex beam[] =
         {
-            sf::Vertex(
+            sf::Vertex{
                 laserPosition,
                 sf::Color::Red
-            ),
+            },
 
-            sf::Vertex(
+            sf::Vertex{
                 laserPosition + direction * 2000.f,
                 sf::Color::Red
-            )
+            }
         };
 
         // Clear screen
@@ -98,7 +102,7 @@ int main()
         window.draw(
             beam,
             2,
-            sf::Lines
+            sf::PrimitiveType::Lines
         );
 
         // Draw laser source
