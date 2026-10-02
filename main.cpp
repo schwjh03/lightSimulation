@@ -1,28 +1,38 @@
 #include <SFML/Graphics.hpp>
-#include <cmath>
+#include "values.hpp"
+#include "laser/laser.hpp"
 
 int main()
 {
+
+    //Initialize the window
     sf::RenderWindow window(
-        sf::VideoMode({1000, 700}),
+        sf::VideoMode({WINDOW_WIDTH, WINDOW_HEIGHT}),
         "Simple Laser",
         sf::Style::Titlebar | sf::Style::Close
     );
 
-    window.setFramerateLimit(60);
+    window.setFramerateLimit(120);
 
+    // Initialize the laser
     const sf::Vector2f laserPosition(150.f, 350.f);
-    sf::Vector2f direction(1.f, 0.f);
+    const sf::Vector2f initialAimPoint(laserPosition.x + 1.f, laserPosition.y);
+
+    Laser laser(laserPosition, initialAimPoint);
+
+    // Initialize the buttons
+
+    sf::Vertex separator[] =
+    {
+        sf::Vertex{{0, BUFFER_SIZE}, sf::Color::White},
+        sf::Vertex{{WINDOW_WIDTH, BUFFER_SIZE}, sf::Color::White}
+    };
 
     bool followMouse = true;
-
-    sf::CircleShape source(6.f);
-    source.setOrigin({6.f, 6.f});
-    source.setPosition(laserPosition);
-    source.setFillColor(sf::Color::Red);
+    
     sf::RectangleShape followButton(sf::Vector2f(100.f, 50.f));
 
-    followButton.setPosition({1000.f / 2.f - 50.f, 20.f});
+    followButton.setPosition({WINDOW_WIDTH / 2.f - 50.f, 20.f});
     followButton.setFillColor(sf::Color::Green);
 
     followButton.setOutlineThickness(2.f);
@@ -44,14 +54,14 @@ int main()
                 {
                     sf::Vector2f clickPosition = window.mapPixelToCoords(mouseButton->position);
 
-                    if(followButton.getGlobalBounds().contains(clickPosition)) 
+                    if (followButton.getGlobalBounds().contains(clickPosition)) 
                     {
                         followMouse = !followMouse;
-                        if(followMouse == true)
+                        if (followMouse)
                         {
                             followButton.setFillColor(sf::Color::Green);
                         }
-                        else if(followMouse == false)
+                        else
                         {
                             followButton.setFillColor(sf::Color::Red);
                         }
@@ -65,48 +75,22 @@ int main()
             break;
         }
 
-        if(followMouse)
+        if (followMouse)
         {
-            sf::Vector2f mouse = 
-            window.mapPixelToCoords(sf::Mouse::getPosition(window));
+            const sf::Vector2f mousePosition = 
+                window.mapPixelToCoords(sf::Mouse::getPosition(window));
 
-            sf::Vector2f offset = mouse - laserPosition;
-
-            float length = std::sqrt(offset.x * offset.x + offset.y * offset.y);
-
-            if(length > 0.f)
-            {
-                direction.x = offset.x / length;
-                direction.y = offset.y / length;
-            }
+            laser.setAimPoint(mousePosition);
         }
-
-        // Create the laser beam
-        sf::Vertex beam[] =
-        {
-            sf::Vertex{
-                laserPosition,
-                sf::Color::Red
-            },
-
-            sf::Vertex{
-                laserPosition + direction * 2000.f,
-                sf::Color::Red
-            }
-        };
 
         // Clear screen
         window.clear(sf::Color(20, 20, 24));
 
-        // Draw laser
-        window.draw(
-            beam,
-            2,
-            sf::PrimitiveType::Lines
-        );
+        // Draw the separator below the button area every frame
+        window.draw(separator, 2, sf::PrimitiveType::Lines);
 
         // Draw laser source
-        window.draw(source);
+        laser.draw(window);
 
         // Draw follow button
         window.draw(followButton);
