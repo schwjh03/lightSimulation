@@ -1,13 +1,9 @@
 #ifndef VALUES_HPP
 #define VALUES_HPP
 
+inline constexpr unsigned WINDOW_WIDTH = 1200;
+inline constexpr unsigned WINDOW_HEIGHT = 800;
+inline constexpr float PANEL_X = 900.f;
+inline constexpr float MIN_SEGMENT_LENGTH = 8.f;
 
-int const BUFFER_SIZE = 100; // The size of the area where the buttons will live
-int const WINDOW_WIDTH = 800;
-int const WINDOW_HEIGHT = WINDOW_WIDTH + BUFFER_SIZE;
-
-
-
-
-
-#endif // VALUES_HPP
+#endif

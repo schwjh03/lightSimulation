@@ -1,48 +1,76 @@
 CXX := g++
+CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -O2
+CPPFLAGS += -I.
+BUILD_DIR := build
+SOURCES := main.cpp editor.cpp optics.cpp $(wildcard laser/*.cpp)
+OBJECTS := $(SOURCES:%.cpp=$(BUILD_DIR)/%.o)
+TEST_OBJECTS := $(filter-out $(BUILD_DIR)/main.o,$(OBJECTS)) $(BUILD_DIR)/tests/simulation_tests.o
+DEPS := $(OBJECTS:.o=.d) $(BUILD_DIR)/tests/simulation_tests.d
 
 ifeq ($(OS),Windows_NT)
-    SFML_DIR := C:/SFML-3.1.0-GCC
-    CPPFLAGS := -I. -I$(SFML_DIR)/include -DSFML_STATIC
-    LDFLAGS := -L$(SFML_DIR)/lib
-    LDLIBS := -lsfml-graphics-s -lsfml-window-s -lsfml-system-s -lopengl32 -lgdi32 -lwinmm
+    # Use one known recipe shell, even when launched from PowerShell or Git Bash.
+    SHELL := cmd.exe
+    .SHELLFLAGS := /C
+    WINDOWS_SHELL := 1
     TARGET := lightSimulation.exe
+    TEST_TARGET := $(BUILD_DIR)/simulation_tests.exe
+    # Match SFML to the active compiler, or allow: make SFML_DIR=C:/path/to/SFML
+    COMPILER_EXE := $(subst \,/,$(firstword $(shell where $(CXX) 2>NUL)))
+    SFML_DIR ?= $(patsubst %/bin/,%,$(dir $(COMPILER_EXE)))
+    ifneq ($(strip $(SFML_DIR)),)
+        CPPFLAGS += -I"$(SFML_DIR)/include"
+        LDFLAGS += -L"$(SFML_DIR)/lib"
+    endif
 else
-    CPPFLAGS := -I.
-    LDFLAGS :=
-    LDLIBS := -lsfml-graphics -lsfml-window -lsfml-system
     TARGET := lightSimulation
+    TEST_TARGET := $(BUILD_DIR)/simulation_tests
+    ifneq ($(strip $(SFML_DIR)),)
+        CPPFLAGS += -I"$(SFML_DIR)/include"
+        LDFLAGS += -L"$(SFML_DIR)/lib"
+    endif
 endif
 
-CXXFLAGS := -std=c++17 -Wall -Wextra -O2
+# Dynamic SFML avoids platform-specific static dependency lists.
+LDLIBS += -lsfml-graphics -lsfml-window -lsfml-system
 
-BUILD_DIR := build
-SOURCES := main.cpp $(wildcard laser/*.cpp)
-OBJECTS := $(SOURCES:%.cpp=$(BUILD_DIR)/%.o)
-DEPS := $(OBJECTS:.o=.d)
-
-.PHONY: all run clean full
-
+.PHONY: all run test clean full
 all: $(TARGET)
 
-$(TARGET): $(OBJECTS) Makefile
-	$(CXX) $(CXXFLAGS) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o $@
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) $(OBJECTS) $(LDFLAGS) $(LDLIBS) -o "$@"
+
+$(TEST_TARGET): $(TEST_OBJECTS)
+	$(CXX) $(CXXFLAGS) $(TEST_OBJECTS) $(LDFLAGS) $(LDLIBS) -o "$@"
 
 $(BUILD_DIR)/%.o: %.cpp Makefile
-ifeq ($(OS),Windows_NT)
-	@if not exist "$(@D)" mkdir "$(@D)"
+ifeq ($(WINDOWS_SHELL),1)
+	@if not exist "$(subst /,\,$(@D))" mkdir "$(subst /,\,$(@D))"
 else
 	@mkdir -p "$(@D)"
 endif
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c "$<" -o "$@"
 
 run: $(TARGET)
+ifeq ($(WINDOWS_SHELL),1)
+	@set "PATH=$(SFML_DIR)/bin;%PATH%" && .\$(TARGET)
+else
 	./$(TARGET)
+endif
 
-full: clean all
-	./$(TARGET)
+test: $(TEST_TARGET)
+ifeq ($(WINDOWS_SHELL),1)
+	@set "PATH=$(SFML_DIR)/bin;%PATH%" && $(subst /,\,$(TEST_TARGET))
+else
+	./$(TEST_TARGET)
+endif
+
+# Recursive makes guarantee clean finishes before building, even with -j.
+full:
+	$(MAKE) clean
+	$(MAKE) run
 
 clean:
-ifeq ($(OS),Windows_NT)
+ifeq ($(WINDOWS_SHELL),1)
 	@if exist "$(TARGET)" del /Q "$(TARGET)"
 	@if exist "$(BUILD_DIR)" rmdir /S /Q "$(BUILD_DIR)"
 else

@@ -1,22 +1,20 @@
-#ifndef LASER_BEAM_HPP
-#define LASER_BEAM_HPP
+#pragma once
 
-#include <SFML/Graphics.hpp>
+#include "optics.hpp"
 
-class Beam
-{
+class Beam {
 public:
     Beam(sf::Vector2f origin, sf::Vector2f aimPoint);
-
-    void draw(sf::RenderWindow& window);
+    void draw(sf::RenderTarget& target, const std::vector<Surface>& surfaces,
+              sf::FloatRect bounds) const;
     void setAimPoint(sf::Vector2f target);
-
+    void setOrigin(sf::Vector2f target);
     void setColor(sf::Color newColor);
-
+    sf::Vector2f getOrigin() const { return origin; }
+    sf::Vector2f getAimPoint() const { return aimPoint; }
+    sf::Color getColor() const { return color; }
 private:
     sf::Vector2f origin;
     sf::Vector2f aimPoint;
-    sf::Color color = sf::Color::Red;
+    sf::Color color = sf::Color(72, 237, 147);
 };
-
-#endif // LASER_BEAM_HPP
