@@ -1,5 +1,14 @@
-*.exe
-*.dll
-/lightSimulation
 /build/
 /.vscode/
+*.exe
+*.dll
+*.o
+*.obj
+*.pdb
+*.png
+*.bmp
+/light-lab-2d
+/lightSimulation
+/scene.txt
+/session.txt
+*.lightscene
