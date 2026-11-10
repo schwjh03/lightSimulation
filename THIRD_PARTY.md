@@ -11,5 +11,6 @@
 raylib supplies the native window, input, rendering, and `CheckCollisionLines`.
 raymath supplies vector operations including `Vector2Reflect`.
 
-The app loads Segoe UI from the Windows system font directory at runtime. No font
-files are redistributed. If unavailable, it falls back to raylib's built-in font.
+The app loads Segoe UI from the Windows system font directory, or DejaVu Sans
+from Linux system font directories, at runtime. No font files are redistributed.
+If unavailable, it falls back to raylib's built-in font.

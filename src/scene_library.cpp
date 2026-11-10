@@ -1,4 +1,6 @@
+#ifdef _WIN32
 #include "native_windows.hpp"
+#endif
 #include "scene_library.hpp"
 #include <algorithm>
 #include <chrono>
@@ -9,6 +11,16 @@
 
 namespace lightlab {
 namespace {
+bool replaceFile(const std::filesystem::path& from, const std::filesystem::path& to) {
+#ifdef _WIN32
+    return MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+#else
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    return !error;
+#endif
+}
+
 bool sameFile(const std::filesystem::path& a, const std::filesystem::path& b) {
     if (a.empty() || b.empty())
         return false;
@@ -50,14 +62,14 @@ std::filesystem::path SceneLibrary::uniquePath(const std::string& name) const {
 
 bool SceneLibrary::atomicSave(const Scene& scene, const std::filesystem::path& path) {
     auto temporary = path;
-    temporary += L".tmp";
+    temporary += ".tmp";
     if (!saveScene(scene, temporary.u8string())) {
         std::error_code ignored;
         std::filesystem::remove(temporary, ignored);
         lastError = "Could not write scene file";
         return false;
     }
-    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    if (!replaceFile(temporary, path)) {
         std::error_code ignored;
         std::filesystem::remove(temporary, ignored);
         lastError = "Could not replace scene file; the previous file was kept";
@@ -74,8 +86,7 @@ bool SceneLibrary::writeRecovery(const Scene& scene) {
     std::ofstream state(temporary);
     state << std::quoted(active.u8string()) << '\n';
     state.close();
-    if (!state || !MoveFileExW(temporary.c_str(), (root / "session.txt").c_str(),
-                               MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    if (!state || !replaceFile(temporary, root / "session.txt")) {
         lastError = "Scene was saved, but the startup session could not be updated";
         return false;
     }
@@ -132,7 +143,11 @@ bool SceneLibrary::preserve(const Scene& scene) {
     if (destination.empty()) {
         auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm local{};
+#ifdef _WIN32
         localtime_s(&local, &now);
+#else
+        localtime_r(&now, &local);
+#endif
         std::ostringstream name;
         name << presetName(scene.preset) << " - " << std::put_time(&local, "%Y-%m-%d %H-%M-%S");
         destination = uniquePath(name.str());

@@ -10,9 +10,18 @@ App::App(bool testSession) : testing(testSession) {
     if (testing) {
         return;
     }
+#ifdef _WIN32
     const char* appData = std::getenv("LOCALAPPDATA");
     auto directory =
         appData ? std::filesystem::path(appData) / "LightLab2D" : std::filesystem::path(GetApplicationDirectory());
+#else
+    const char* dataHome = std::getenv("XDG_DATA_HOME");
+    const char* home = std::getenv("HOME");
+    auto directory = dataHome && *dataHome && std::filesystem::path(dataHome).is_absolute()
+        ? std::filesystem::path(dataHome) / "LightLab2D"
+        : (home ? std::filesystem::path(home) / ".local/share/LightLab2D"
+                : std::filesystem::path(GetApplicationDirectory()) / "LightLab2D");
+#endif
     library = std::make_unique<SceneLibrary>(directory);
     if (library->restore(scene)) {
         status = "Scene restored";
@@ -179,6 +188,7 @@ void App::handleCanvas() {
     Vector2 point = keepInside({pointer.position.x - canvas.x, pointer.position.y - canvas.y});
     if (pointer.pressed && ui.hovered(canvas)) {
         anchor = point;
+        pointerMoved = false;
         if (tool == Tool::Laser) {
             drag = Drag::CreateLaser;
             draftEnd = point;
@@ -258,6 +268,8 @@ void App::handleCanvas() {
         }
     }
 
+    if ((pointer.down || pointer.released) && Vector2Distance(anchor, point) > 5)
+        pointerMoved = true;
     if (pointer.down) {
         if (drag == Drag::Source && selectedLaser >= 0 && selectedLaser < static_cast<int>(scene.lasers.size())) {
             scene.lasers[selectedLaser].position = keepInside(Vector2Add(point, sourceGrabOffset));
@@ -355,8 +367,27 @@ void App::handleCanvas() {
             if (tool == Tool::Splitter || tool == Tool::Detector)
                 tool = Tool::Select;
         }
-        if (drag != Drag::None)
+        std::uint64_t clickedId = 0;
+        if (!pointerMoved && tool == Tool::Select && drag != Drag::None &&
+            drag != Drag::Create && drag != Drag::CreateLaser && drag != Drag::CreatePrism) {
+            ensureSurfaceIds();
+            if (selected == -2 && selectedLaser >= 0)
+                clickedId = scene.lasers[selectedLaser].id;
+            else if (selected == -3 && selectedPrism >= 0)
+                clickedId = scene.prisms[selectedPrism].id;
+            else if (selected >= 0)
+                clickedId = scene.surfaces[selected].id;
+        }
+        double now = GetTime();
+        if (clickedId && clickedId == lastObjectClickId && now - lastObjectClickTime <= .4 &&
+            Vector2Distance(point, lastObjectClickPosition) <= 5) {
             requestSelectionWindow();
+            lastObjectClickId = 0;
+        } else {
+            lastObjectClickId = clickedId;
+        }
+        lastObjectClickTime = now;
+        lastObjectClickPosition = point;
         drag = Drag::None;
     }
 }

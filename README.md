@@ -1,6 +1,6 @@
 # Light Lab 2D
 
-A native C++17 optics sandbox for Windows. Aim a laser, draw mirrors and walls,
+A native C++17 optics sandbox for Windows and Linux. Aim a laser, draw mirrors and walls,
 and place glass prisms to refract and disperse light. Includes a dark optical
 bench, metal laser housings, glowing beams, glass faces, and editable hardware.
 Measure spectra with detectors, compare materials, and divide light with beam splitters.
@@ -9,7 +9,8 @@ Uses the bundled raylib 5.5 library.
 ## Start
 
 This repository contains source code. Follow **Build and Test** below to build
-and launch it on 64-bit Windows. Generated executables are not committed.
+and launch it on 64-bit Windows, or use the **Native Linux** instructions below.
+Generated executables are not committed.
 After building, double-click `LightLab2D.exe` in this folder to run it again.
 The build script also writes a copy to `build/LightLab2D.exe`; the built app
 needs no separate raylib installation or downloaded runtime DLLs.
@@ -147,7 +148,33 @@ mingw32-make test            # Build and run all checks
 mingw32-make ARGS=--prism    # Build and launch the prism demo
 ```
 
-The Makefile uses the build script below. Close the app before rebuilding its
+### Native Linux
+
+Install a C++17 compiler, Make, CMake, curl, pkg-config, OpenGL and X11 development
+packages, plus Zenity for Open / Save As dialogs. On Debian/Ubuntu:
+
+```sh
+sudo apt install build-essential cmake curl pkg-config libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev zenity
+make build                 # Build ./LightLab2D
+make                       # Build and launch natively
+make ARGS=--prism          # Launch the prism demo
+make test-core             # Optics and scene tests; no display required
+make test                  # Also run the rendered UI checks; requires a desktop
+```
+
+The Makefile uses an installed raylib from `pkg-config` when available. Otherwise,
+it downloads raylib 5.5 on the first build and builds a native static library under
+`build/`; this first build needs internet access. The bundled Windows archive is
+only used on Windows. Compiler and linker flags can be overridden as usual.
+Linux inspectors use independent X11 windows with clickable controls and live
+detector spectra. An X11 desktop or XWayland is required. The Win32-specific
+window checks run only on Windows; Linux runs X11 inspector lifecycle checks
+alongside the shared UI checks.
+Scenes and session data live under `$XDG_DATA_HOME/LightLab2D`, defaulting to
+`~/.local/share/LightLab2D`. Open and Save As launch Zenity; cancelling keeps the
+current scene intact.
+
+On Windows, the Makefile uses the build script below. Close the app before rebuilding its
 executable; the test target leaves the published executable alone so it can stay open.
 You can also call the script directly:
 

@@ -63,6 +63,10 @@ private:
     Prism originalPrism{};
     int prismCorner = 0;
     int laserListOffset = 0;
+    double lastObjectClickTime = -1;
+    std::uint64_t lastObjectClickId = 0;
+    Vector2 lastObjectClickPosition{};
+    bool pointerMoved = false;
 
     struct HistoryEntry {
         Scene scene;

@@ -4,10 +4,22 @@
 
 namespace lightlab {
 void Ui::load() {
+#ifdef _WIN32
     const char* windows = std::getenv("WINDIR");
     std::string directory = std::string(windows ? windows : "C:/Windows") + "/Fonts/";
     regular = LoadFontEx((directory + "segoeui.ttf").c_str(), 48, nullptr, 0);
     bold = LoadFontEx((directory + "segoeuib.ttf").c_str(), 56, nullptr, 0);
+#else
+    for (const char* directory : {"/usr/share/fonts/truetype/dejavu/", "/usr/share/fonts/TTF/"}) {
+        auto normalPath = std::string(directory) + "DejaVuSans.ttf";
+        auto boldPath = std::string(directory) + "DejaVuSans-Bold.ttf";
+        if (FileExists(normalPath.c_str()) && FileExists(boldPath.c_str())) {
+            regular = LoadFontEx(normalPath.c_str(), 48, nullptr, 0);
+            bold = LoadFontEx(boldPath.c_str(), 56, nullptr, 0);
+            break;
+        }
+    }
+#endif
     if (!regular.texture.id) {
         regular = GetFontDefault();
     }
