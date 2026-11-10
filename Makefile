@@ -3,7 +3,7 @@
 
 ARGS ?=
 
-.PHONY: run build test help
+.PHONY: run build test clean help
 
 ifeq ($(OS),Windows_NT)
 SHELL := cmd.exe
@@ -17,6 +17,10 @@ build:
 
 test:
 	@powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -Test -NoPublish
+
+clean:
+	@if exist build rmdir /S /Q build
+	@if exist LightLab2D.exe del /Q LightLab2D.exe
 else
 # Linux uses a native raylib library, never the bundled Windows archive.
 CXX ?= g++
@@ -72,10 +76,14 @@ test: test-core build/LightLab2D
 test-core: build/optics_tests build/scene_library_tests
 	cd build && ./optics_tests && ./scene_library_tests
 
+clean:
+	$(RM) -r build LightLab2D
+
 endif
 
 help:
 	@echo make             Build and launch Light Lab 2D
 	@echo make build       Build without launching
 	@echo make test        Build and run all checks
+	@echo make clean       Remove build outputs
 	@echo make ARGS=--prism Build and launch the prism demo
