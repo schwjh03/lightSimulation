@@ -4,6 +4,14 @@
 #include <string>
 
 namespace lightlab {
+inline bool isLengthControl(int action) {
+    return action == 3 || action == 12 || action == 36 || action == 37 || action == 39;
+}
+
+inline bool isAngleControl(int action) {
+    return action == 1 || action == 2 || action == 13 || action == 14 || action == 15;
+}
+
 inline constexpr Color paper = {18, 26, 39, 255};
 inline constexpr Color ink = {228, 236, 247, 255};
 inline constexpr Color muted = {140, 157, 181, 255};
@@ -18,7 +26,7 @@ inline constexpr Color lightColors[] = {{255, 215, 50, 255}, {255, 48, 69, 255},
                                         {37, 233, 255, 255}, {200, 102, 255, 255}, {246, 250, 255, 255},
                                         {60, 125, 255, 255}};
 inline constexpr const char* colorNames[] = {"Yellow / 589 nm",     "Red / 650 nm",          "Green / 532 nm",
-                                             "Cyan / blue + green", "Purple / violet + red", "White / full spectrum",
+                                             "Cyan / blue + green", "Purple / violet + red", "White / 15 bands",
                                              "Blue / 460 nm"};
 
 struct Pointer {

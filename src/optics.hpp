@@ -32,6 +32,8 @@ struct DetectorReading {
 
 std::vector<SpectralBand> sourceSpectrum(int colorIndex);
 Color wavelengthColor(float wavelength);
+float paraxialFocalLengthCm(const Prism& lens, float wavelength = 589);
+float objectIndex(float wavelength, const Prism& object);
 float glassIndex(float wavelength, Glass glass = Glass::Flint);
 float fresnelReflectance(Vector2 incoming, Vector2 normal, float fromIndex, float toIndex);
 bool refractDirection(Vector2 incoming, Vector2 opposingNormal, float fromIndex, float toIndex, Vector2& outgoing);

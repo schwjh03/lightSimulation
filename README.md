@@ -45,37 +45,64 @@ Current work is preserved before switching scenes, and Undo can restore it.
 - Each laser has its own color, direction, spread, ray count, reflection limit,
   Laser/Point mode, and sweep setting. You can delete individual lasers and Undo
   placement, edits, or deletion. A scene can also contain no lasers.
-- Clicking any object opens its own movable desktop inspector: laser, prism,
+- Double-clicking an object opens its own movable desktop inspector: laser, prism,
   splitter, mirror, wall, or detector. Drag its title bar outside the app or onto
   another monitor. Several inspectors can stay open while you edit the workspace.
-  Closing an inspector keeps the object; click it again or use the selection
+  Closing an inspector keeps the object; double-click it again or use the selection
   area's **Open** button to reopen it. Changes from inspector controls support Undo.
 - Drag the small dot in front of a beam source to aim it.
+- **Laser wall:** choose **Laser wall** beside Laser in the sidebar, then click to
+  place a bar of parallel beams. Drag while placing to aim it. Double-click for
+  **Width (cm)**, direction, beam count and color. Drag the bar to move it; its aim
+  handle rotates it. It counts as one source and supports Save, Delete and Undo.
+  Place it before a converging lens; use a narrow width for a clear paraxial focus.
+  Spherical aberration is retained for wider bundles. Existing laser inspectors
+  also offer Laser wall mode. `make ARGS=--laser-wall` opens a focusing example.
 - **Mirror / Wall:** drag on the canvas to add a reflective or absorbing segment.
 - **Prism (P):** click to place a triangular glass prism, or drag from its center
   to one corner to choose its size and orientation. Placement returns to Select.
 - Click a prism and drag its body to move it. Drag any of its three corner handles
   to resize and rotate it. Delete, Undo, and Save all work with prisms.
-- Select a prism to open its object inspector: change its **apex angle**, rotation,
+- Double-click a prism to open its object inspector: change its **apex angle**, rotation,
   size, and material (**flint**, **crown**, or an illustrative **water model**).
+- **Metric dimensions:** all physical length controls (lens length and center thickness,
+  prism radius, and mirror/wall/splitter/detector length) display **cm** with two decimal
+  places. The bench is **100 × 70.4 cm**; 10 internal world units represent 1 cm.
+  Pointer coordinates also display cm. The same scale applies to positions, curvature
+  radii, and thickness throughout ray tracing; saved scenes retain their layouts.
+  Angles display degrees, refractive index is dimensionless, and wavelengths remain
+  in nm (converted to micrometers for the glass dispersion coefficients).
+- **Lens dropdown:** to the right of Detector, choose Biconvex, Plano-Convex,
+  Biconcave, Plano-Concave, or positive/negative Meniscus. Click to place; drag
+  while placing to size and rotate. Drag the body to move it. Double-click the
+  lens to open its inspector with **Length** (aperture), **Thickness** (center thickness), rotation,
+  material and **Flip** controls. Thickness moves the spherical faces apart
+  independently of aperture; its minimum keeps a finite glass rim.
+  Material buttons show **n at 589 nm**. The **n** slider adjusts it from 1.000
+  to 2.500; selecting a preset resets it to that material’s index. Custom indices
+  retain the selected material’s dispersion and are saved with the lens.
+  Flip reverses the actual glass geometry. Curved faces use exact spherical
+  intersections and Snell refraction, with dispersion, Fresnel reflections and
+  total internal reflection handled just like other glass objects.
 - **Splitter (S):** draw a segment, then select it to adjust reflected/transmitted
   power with a slider or the 25%, 50%, and 75% presets. Its endpoints and body can
   be dragged like a mirror. The ideal splitter divides power without absorption.
 - **Detector (D):** draw a receiving segment. It absorbs incoming light from both
-  sides. Its badge reports received power as a percentage of the source. Select
-  it to open a separate native Windows window with the live spectrum, relative
+  sides. Its badge reports received power as a percentage of the source. Double-click
+  it to open a separate inspector window with the live spectrum, relative
   band heights, and peak or balanced bands. Drag its title bar anywhere on the
   desktop, including outside the main application or onto another monitor, and
   resize it using the window borders. Multiple detectors can stay open at once
   while you edit other objects. Closing a readings window leaves its detector
-  intact; click that detector again or use **Open** in the selection area to
+  intact; double-click that detector again or use **Open** in the selection area to
   reopen it. Window positions/sizes are remembered for the current app session.
-  Hover a spectrum bar to read that band's wavelength and share of source power.
-- **Glass reflections:** in a prism's inspector, toggle partial Fresnel reflections
+  Hover a spectrum bar to read that band's wavelength and share of total emitted power.
+- **Glass reflections:** in a glass object's inspector, toggle partial Fresnel reflections
   at all glass interfaces. Total internal reflection still works when disabled.
 - **Grid:** show or hide the animated dot grid. The dots always move while the grid is visible.
 - **Laser color:** choose among yellow, red, green, cyan, purple, white, and blue
   in that laser's inspector. The color label identifies the chosen spectrum.
+- **Lense testing:** all six lens variants (including both meniscus types), with one fan-shaped laser beam.
 - **Prism demo:** a narrow white beam, a glass prism, and a detector, ready to experiment with.
 - **Room / Relay / Blank / Prism demo / Splitter lab:** choose a starter scene.
 - **Laser / Point:** in a laser's inspector, switch between a beam and light emitted in all directions.
@@ -103,9 +130,9 @@ Named scenes default to `%LOCALAPPDATA%\LightLab2D\scenes`, not the program fold
 You can also choose another folder in the file dialog. Recovery/session information
 lives in `%LOCALAPPDATA%\LightLab2D`.
 The scene supports 16 lasers, 64 segments (mirrors, walls, splitters, or detectors),
-16 prisms, and up to 240 initial ray directions / 12 reflections per laser. Version 4
-saves preserve all lasers and their independent settings. Existing version 1, 2,
-and 3 scenes still load with their original single laser. Tests and screenshot sessions do not
+16 glass objects (prisms and lenses), and up to 240 initial ray directions / 12 reflections per laser. Version 8
+saves preserve laser-wall width and mode, independent lens thickness, custom refractive indices, lens shapes and flipped orientations along with all laser settings.
+Existing versions 1 through 7 still load; versions 1 through 3 retain their original single laser. Tests and screenshot sessions do not
 change your saved scene.
 
 ## Build and Test
@@ -265,6 +292,14 @@ Inspector captures also write a `.object.bmp` companion image for the separate w
 8. Detector readings sum arriving spectral power before display gain is applied.
    Each laser contributes equal emitted power. Detector percentages are relative
    to the combined emitted power of all lasers, and spectra sum arriving bands.
+
+## Academic experiments
+
+See [ACADEMIC_GUIDE.md](ACADEMIC_GUIDE.md) for unit conventions, signed lens
+curvatures, thick-lens focal formulas, reproducible experiment setup, analytical
+validation coverage and model limitations. Lens inspectors show R1/R2 and the
+signed effective paraxial focal length at 589 nm; this differs from back focal
+distance. This educational geometric-optics model is not a calibrated instrument.
 
 ## Spectral model
 

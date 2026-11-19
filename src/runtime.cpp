@@ -12,7 +12,7 @@ int runWindow(int argc, char** argv) {
     bool testing = false, smoke = false, small = false;
     std::string capture;
     Preset preset = Preset::Room;
-    bool point = false, multi = false;
+    bool point = false, multi = false, wallDemo = false;
     int colorOverride = -1;
     int inspect = 0;
     float backgroundStart = 0;
@@ -31,6 +31,10 @@ int runWindow(int argc, char** argv) {
         } else if (argument == "--relay") {
             testing = true;
             preset = Preset::Relay;
+        } else if (argument == "--laser-wall") {
+            testing = true;
+            wallDemo = true;
+            preset = Preset::Blank;
         } else if (argument == "--point") {
             testing = true;
             point = true;
@@ -111,6 +115,23 @@ int runWindow(int argc, char** argv) {
                 app.scene.lasers.push_back(light);
             }
             app.scene.surfaces.push_back({{850, 100}, {850, 620}, Material::Detector});
+        }
+        if (wallDemo) {
+            auto& wall = app.scene.lasers[0];
+            wall.position = {180, 352};
+            wall.angle = 0;
+            wall.mode = EmitterMode::Wall;
+            wall.width = 40;
+            wall.rayCount = 9;
+            wall.colorIndex = 0;
+            Prism lens;
+            lens.center = {500, 352};
+            lens.angle = 0;
+            lens.radius = 100;
+            lens.lens = LensShape::Biconvex;
+            lens.glass = Glass::Crown;
+            app.scene.prisms = {lens};
+            app.scene.partialReflections = false;
         }
         if (point) {
             app.scene.lasers[0].mode = EmitterMode::Point;

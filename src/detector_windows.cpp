@@ -76,8 +76,10 @@ struct Meter {
 
     std::wstring label() const {
         switch (kind) {
-        case Kind::Prism:
-            return L"Glass prism";
+        case Kind::Prism: {
+            std::string name = lensName(prism.lens);
+            return std::wstring(name.begin(), name.end());
+        }
         case Kind::Splitter:
             return L"Beam splitter";
         case Kind::Mirror:
@@ -85,7 +87,7 @@ struct Meter {
         case Kind::Wall:
             return L"Wall";
         case Kind::Laser:
-            return L"Laser source";
+            return emitter.mode == EmitterMode::Wall ? L"Laser wall" : L"Laser source";
         default:
             return L"Light detector";
         }
@@ -96,16 +98,34 @@ struct Meter {
     void apply(int action, float value) {
         if (!app)
             return;
+        if (isLengthControl(action))
+            value = fromCentimeters(value);
+        if (action == 35) {
+            app->eraseObject(id);
+            return;
+        }
         for (auto& p : app->scene.prisms)
             if (p.id == id) {
+                if (action == 33)
+                    p.flipped = !p.flipped;
                 if (action == 1)
                     p.apex = value;
                 if (action == 2)
                     p.angle = value;
                 if (action == 3)
                     p.radius = value;
-                if (action >= 4 && action <= 6)
+                if (action == 36) {
+                    p.thickness = lensThickness(p);
+                    p.radius = value / 2;
+                }
+                if (action == 37)
+                    p.thickness = value;
+                if (action >= 4 && action <= 6) {
                     p.glass = static_cast<Glass>(action - 4);
+                    p.customIndex = 0;
+                }
+                if (action == 34)
+                    p.customIndex = std::clamp(value, 1.f, 2.5f);
                 if (action == 7)
                     app->scene.partialReflections = !app->scene.partialReflections;
                 p = fitPrism(p);
@@ -152,6 +172,14 @@ struct Meter {
                     light.mode = EmitterMode::Beam;
                 if (action == 31)
                     light.mode = EmitterMode::Point;
+                if (action == 38) {
+                    light.mode = EmitterMode::Wall;
+                    if (light.rayCount < 2)
+                        light.rayCount = 9;
+                }
+                if (action == 39)
+                    light.width = value;
+                light = fitEmitter(light);
             }
         sync(*app);
         InvalidateRect(window, nullptr, FALSE);
@@ -217,6 +245,9 @@ struct Meter {
         widgets.clear();
         SetBkMode(dc, TRANSPARENT);
         fill(0, 0, w, h, RGB(18, 28, 43));
+        fill(w - 96, 14, 72, 28, RGB(163, 45, 64));
+        text(L"Delete", w - 86, 19, 1, RGB(255, 240, 242));
+        widgets.push_back({{px(w - 96), px(14), px(w - 24), px(42)}, 35, false, 0, 0});
         if (kind != Kind::Detector) {
             Color accent = kind == Kind::Prism      ? prismColor
                            : kind == Kind::Splitter ? splitterColor
@@ -230,15 +261,32 @@ struct Meter {
                 fill(x, y, rw, 32, rgb(chosen ? teal : Color{31, 46, 65, 255}));
                 if (action >= 20 && action <= 26)
                     fill(x + 5, y + 5, rw - 10, 22, rgb(swatch));
-                else
+                else if (action >= 4 && action <= 6) {
+                    text(name, x + 7, y + 1, 0, rgb(ink));
+                    wchar_t indexText[32];
+                    std::swprintf(indexText, 32, L"n=%.3f", glassIndex(589, static_cast<Glass>(action - 4)));
+                    text(indexText, x + 7, y + 16, 0, rgb(ink));
+                } else
                     text(name, x + 10, y + 6, 1, rgb(ink));
                 widgets.push_back({{px(x), px(y), px(x + rw), px(y + 32)}, action, false, 0, 0});
             };
             auto slider = [&](int action, const wchar_t* name, float y, float value, float lo, float hi,
                               const wchar_t* suffix) {
+                const bool length = isLengthControl(action);
+                if (length) {
+                    value = toCentimeters(value);
+                    lo = toCentimeters(lo);
+                    hi = toCentimeters(hi);
+                    suffix = L" cm";
+                }
                 text(name, 24, y, 1, rgb(ink));
                 wchar_t valueText[64];
-                std::swprintf(valueText, 64, L"%.0f%ls", value, suffix);
+                std::swprintf(valueText, 64,
+                              action == 34             ? L"%.3f%ls"
+                              : length                 ? L"%.2f%ls"
+                              : isAngleControl(action) ? L"%.1f%ls"
+                                                       : L"%.0f%ls",
+                              value, suffix);
                 text(valueText, w - 96, y, 1, rgb(accent));
                 float fraction = std::clamp((value - lo) / (hi - lo), 0.f, 1.f);
                 fill(29, y + 32, w - 58, 4, rgb(border));
@@ -248,15 +296,32 @@ struct Meter {
             };
             if (kind == Kind::Prism) {
                 text(L"MATERIAL", 24, 108, 0, rgb(muted));
-                float step = (w - 48) / 3;
-                button(4, L"Flint", 24, 132, step - 5, prism.glass == Glass::Flint);
-                button(5, L"Crown", 24 + step, 132, step - 5, prism.glass == Glass::Crown);
-                button(6, L"Water", 24 + step * 2, 132, step - 5, prism.glass == Glass::Water);
-                slider(1, L"Apex angle", 190, prism.apex, 20, 100, L" deg");
-                slider(2, L"Rotation", 264, prism.angle, -180, 180, L" deg");
-                slider(3, L"Size", 338, prism.radius, 24, 210, L" px");
-                button(7, reflections ? L"Glass reflections: on" : L"Glass reflections: off", 24, 412, w - 48,
-                       reflections);
+                float step = (w - 48 + 12) / 3;
+                for (int i = 0; i < 3; ++i) {
+                    const wchar_t* names[] = {L"Flint", L"Crown", L"Water"};
+                    button(4 + i, names[i], 24 + i * step, 132, step - 12,
+                           prism.customIndex == 0 && prism.glass == static_cast<Glass>(i));
+                }
+                if (prism.lens == LensShape::Prism)
+                    slider(1, L"Apex angle", 190, prism.apex, 20, 100, L" deg");
+                const bool lens = prism.lens != LensShape::Prism;
+                slider(2, L"Rotation", lens ? 190 : 264, prism.angle, -180, 180, L" deg");
+                if (lens) {
+                    slider(36, L"Length", 264, 2 * prism.radius, 48, 420, L" cm");
+                    slider(37, L"Thickness (center)", 338, lensThickness(prism), minimumLensThickness(prism), 300,
+                           L" cm");
+                } else
+                    slider(3, L"Radius", 338, prism.radius, 24, 210, L" cm");
+                if (lens)
+                    slider(34, L"n (589 nm)", 412, objectIndex(589, prism), 1, 2.5f, L"");
+                button(7,
+                       reflections ? L"Fresnel reflections (all glass): on" : L"Fresnel reflections (all glass): off",
+                       24, lens ? 486 : 412, w - 48, reflections);
+                if (prism.lens == LensShape::PlanoConvex || prism.lens == LensShape::PlanoConcave ||
+                    prism.lens == LensShape::PositiveMeniscus || prism.lens == LensShape::NegativeMeniscus)
+                    button(33, L"Flip", 24, 528, w - 48, prism.flipped);
+                if (!lens)
+                    slider(34, L"n (589 nm)", 466, objectIndex(589, prism), 1, 2.5f, L"");
             } else if (kind == Kind::Splitter) {
                 wchar_t valueText[64];
                 std::swprintf(valueText, 64, L"Reflected %.0f%% / Transmitted %.0f%%", surface.reflectivity * 100,
@@ -266,16 +331,22 @@ struct Meter {
                 float step = (w - 48) / 3;
                 for (int i = 0; i < 3; ++i)
                     button(9 + i, std::to_wstring(25 + i * 25) + L"%", 24 + i * step, 216, step - 5);
-                slider(12, L"Length", 284, surfaceLength(surface), 8, 1100, L" px");
+                slider(12, L"Length", 284, surfaceLength(surface), 8, maximumSurfaceLength(), L" cm");
                 slider(13, L"Angle", 364,
                        std::atan2(surface.end.y - surface.start.y, surface.end.x - surface.start.x) * RAD2DEG, -180,
                        180, L" deg");
             } else if (kind == Kind::Laser) {
-                button(30, L"Laser", 24, 110, (w - 58) / 2, emitter.mode == EmitterMode::Beam);
-                button(31, L"Point", 29 + (w - 48) / 2, 110, (w - 58) / 2, emitter.mode == EmitterMode::Point);
+                float stepMode = (w - 48) / 3;
+                button(30, L"Laser", 24, 110, stepMode - 5, emitter.mode == EmitterMode::Beam);
+                button(31, L"Point", 24 + stepMode, 110, stepMode - 5, emitter.mode == EmitterMode::Point);
+                button(38, L"Laser wall", 24 + 2 * stepMode, 110, stepMode - 5, emitter.mode == EmitterMode::Wall);
                 slider(14, L"Direction", 174, emitter.angle, -180, 180, L" deg");
-                slider(15, L"Spread", 246, emitter.spread, 0, 120, L" deg");
-                slider(16, L"Rays", 318, static_cast<float>(emitter.rayCount), 1, 240, L"");
+                if (emitter.mode == EmitterMode::Wall)
+                    slider(39, L"Width", 246, emitter.width, 8, 400, L" cm");
+                else
+                    slider(15, L"Spread", 246, emitter.spread, 0, 120, L" deg");
+                slider(16, L"Rays", 318, static_cast<float>(emitter.rayCount),
+                       emitter.mode == EmitterMode::Wall ? 2 : 1, 240, L"");
                 slider(17, L"Reflections", 390, static_cast<float>(emitter.bounces), 0, 12, L"");
                 std::string colorLabel = std::string("COLOR / ") + colorNames[emitter.colorIndex];
                 text(std::wstring(colorLabel.begin(), colorLabel.end()), 24, 462, 0, rgb(muted));
@@ -284,13 +355,34 @@ struct Meter {
                     button(20 + i, L"", 24 + i * step, 486, step - 4, emitter.colorIndex == i, lightColors[i]);
                 button(32, emitter.sweep ? L"Sweep: on" : L"Sweep: off", 24, 550, w - 48, emitter.sweep);
             } else {
-                slider(12, L"Length", 120, surfaceLength(surface), 8, 1100, L" px");
+                slider(12, L"Length", 120, surfaceLength(surface), 8, maximumSurfaceLength(), L" cm");
                 slider(13, L"Angle", 200,
                        std::atan2(surface.end.y - surface.start.y, surface.end.x - surface.start.x) * RAD2DEG, -180,
                        180, L" deg");
+
+                if (kind == Kind::Mirror)
+                    text(L"Mirror reflectance: 82% (fixed)", 24, 266, 1, rgb(muted));
                 text(L"Drag the object on the canvas to move it.", 24, 292, 1, rgb(muted));
             }
-            text(L"Drag this window anywhere on the desktop.", 24, h - 30, 0, rgb(muted));
+            if (kind == Kind::Prism && prism.lens != LensShape::Prism) {
+                auto radii = lensRadiiCm(prism);
+                std::string r1 = std::isinf(radii[0]) ? "flat" : TextFormat("%.2f cm", radii[0]);
+                std::string r2 = std::isinf(radii[1]) ? "flat" : TextFormat("%.2f cm", radii[1]);
+                std::string geometry = "R1: " + r1 + " / R2: " + r2;
+                text(std::wstring(geometry.begin(), geometry.end()), 24, 580, 0, rgb(muted));
+                float focal = paraxialFocalLengthCm(prism);
+                wchar_t focalText[96];
+                if (std::isinf(focal))
+                    std::swprintf(focalText, 96, L"Paraxial f (589 nm): infinity");
+                else
+                    std::swprintf(focalText, 96, L"Paraxial f (589 nm): %+.2f cm", focal);
+                text(focalText, 24, 606, 0, rgb(ink));
+            }
+            std::wstring footnote = kind != Kind::Prism           ? L"Drag this window anywhere on the desktop."
+                                    : prism.customIndex != 0      ? L"Custom n: shifted material dispersion"
+                                    : prism.glass == Glass::Water ? L"Water: approximate Cauchy model"
+                                                                  : L"Glass: catalog Sellmeier model";
+            text(footnote, 24, h - 30, 0, rgb(muted));
             return;
         }
         text(L"LIVE DETECTOR / D" + std::to_wstring(number), 24, 22, 0, rgb(muted));
@@ -331,7 +423,8 @@ struct Meter {
         text(L"720 nm", w - 70, chartY + chartH + 8, 0, rgb(muted));
         if (hoverBand >= 0 && hoverBand < static_cast<int>(reading.spectrum.size())) {
             auto band = reading.spectrum[hoverBand];
-            std::swprintf(formatted, 96, L"%.0f nm / %.2f%% of source", band.wavelength, band.weight * 100);
+            std::swprintf(formatted, 96, L"%.0f nm / %.2f%% of total emitted power", band.wavelength,
+                          band.weight * 100);
             text(formatted, 24, h - 30, 0, rgb(detectorColor));
         } else
             text(L"Drag the title bar to move this window.", 24, h - 30, 0, rgb(muted));
@@ -377,6 +470,7 @@ LRESULT CALLBACK meterProcedure(HWND window, UINT message, WPARAM wParam, LPARAM
         auto* limits = reinterpret_cast<MINMAXINFO*>(lParam);
         limits->ptMinTrackSize = {MulDiv(340, dpi ? dpi : 96, 96), MulDiv(meter->kind == Kind::Detector ? 500
                                                                           : meter->kind == Kind::Laser  ? 700
+                                                                          : meter->kind == Kind::Prism  ? 740
                                                                                                         : 560,
                                                                           dpi ? dpi : 96, 96)};
         return 0;
@@ -391,7 +485,7 @@ LRESULT CALLBACK meterProcedure(HWND window, UINT message, WPARAM wParam, LPARAM
         POINT point{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
         for (auto widget : meter->widgets)
             if (PtInRect(&widget.rect, point)) {
-                if (meter->app)
+                if (meter->app && widget.action != 35)
                     meter->app->checkpoint();
                 if (widget.slider) {
                     meter->activeAction = widget.action;
@@ -494,7 +588,10 @@ struct DetectorWindows::Impl {
         UINT dpi = GetDpiForWindow(owner);
         if (!dpi)
             dpi = 96;
-        int width = MulDiv(390, dpi, 96), height = MulDiv(meter->kind == Kind::Laser ? 700 : 560, dpi, 96);
+        int width = MulDiv(390, dpi, 96), height = MulDiv(meter->kind == Kind::Laser   ? 700
+                                                          : meter->kind == Kind::Prism ? 740
+                                                                                       : 560,
+                                                          dpi, 96);
         RECT ownerRect{};
         GetWindowRect(owner, &ownerRect);
         MONITORINFO monitor{sizeof(monitor), {}, {}, 0};

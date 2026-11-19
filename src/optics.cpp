@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 
 namespace lightlab {
 std::vector<SpectralBand> sourceSpectrum(int colorIndex) {
@@ -53,6 +54,7 @@ Color wavelengthColor(float wavelength) {
 }
 
 float glassIndex(float wavelength, Glass glass) {
+    // Sellmeier/Cauchy coefficients below expect micrometers; spectrum input is nanometers.
     const double lambda = std::clamp(wavelength, 400.f, 750.f) / 1000.0;
     const double l2 = lambda * lambda;
     if (glass == Glass::Water)
@@ -66,6 +68,21 @@ float glassIndex(float wavelength, Glass glass) {
     // SCHOTT N-SF11 Sellmeier coefficients.
     return static_cast<float>(std::sqrt(1 + 1.73759695 * l2 / (l2 - .013188707) + .313747346 * l2 / (l2 - .0623068142) +
                                         1.89878101 * l2 / (l2 - 155.23629)));
+}
+
+float objectIndex(float wavelength, const Prism& object) {
+    float index = glassIndex(wavelength, object.glass);
+    return object.customIndex == 0 ? index : std::max(1.f, index + object.customIndex - glassIndex(589, object.glass));
+}
+
+float paraxialFocalLengthCm(const Prism& lens, float wavelength) {
+    if (lens.lens == LensShape::Prism)
+        return std::numeric_limits<float>::quiet_NaN();
+    auto radii = lensRadiiCm(lens);
+    const double c1 = 1.0 / radii[0], c2 = 1.0 / radii[1], n = objectIndex(wavelength, lens);
+    const double d = toCentimeters(lensThickness(lens));
+    const double power = (n - 1) * (c1 - c2 + (n - 1) * d * c1 * c2 / n);
+    return std::abs(power) < 1e-12 ? std::numeric_limits<float>::infinity() : static_cast<float>(1 / power);
 }
 
 bool refractDirection(Vector2 incoming, Vector2 normal, float fromIndex, float toIndex, Vector2& outgoing) {
@@ -112,7 +129,7 @@ std::vector<RaySegment> traceRay(Vector2 origin, Vector2 direction, const std::v
                 return i;
         return -1;
     };
-    auto indexFor = [&](int medium) { return medium < 0 ? 1.f : glassIndex(wavelength, prisms[medium].glass); };
+    auto indexFor = [&](int medium) { return medium < 0 ? 1.f : objectIndex(wavelength, prisms[medium]); };
 
     struct State {
         Vector2 origin, direction;
@@ -157,6 +174,17 @@ std::vector<RaySegment> traceRay(Vector2 origin, Vector2 direction, const std::v
             for (const auto& boundary : boundaries)
                 consider(boundary.start, boundary.end, boundary.material, false, -1);
             for (const auto& prism : prisms) {
+                if (prism.lens != LensShape::Prism) {
+                    Vector2 n;
+                    if (intersectLens(prism, state.origin, state.direction, nearestDistance, n)) {
+                        closest = Vector2Add(state.origin, Vector2Scale(state.direction, nearestDistance));
+                        normal = Vector2DotProduct(n, state.direction) > 0 ? Vector2Negate(n) : n;
+                        hitGlass = true;
+                        found = true;
+                        hitSurface = -1;
+                    }
+                    continue;
+                }
                 auto vertices = prismVertices(prism);
                 for (int edge = 0; edge < 3; ++edge)
                     consider(vertices[edge], vertices[(edge + 1) % 3], Material::Mirror, true, -1);
@@ -229,12 +257,14 @@ std::vector<RaySegment> traceScene(const Scene& scene) {
         const int rayCount = narrow ? 1 : std::clamp(light.rayCount, 1, 240);
         const auto spectrum = sourceSpectrum(light.colorIndex);
         for (int index = 0; index < rayCount && rays.size() < 120000; ++index) {
-            const float fraction = rayCount == 1 ? .5f : index / static_cast<float>(rayCount - 1);
-            const float angle = (light.angle + (light.mode == EmitterMode::Point ? index * 360.f / rayCount
-                                                                                 : (fraction - .5f) * light.spread)) *
-                                DEG2RAD;
+            float fraction = rayCount == 1 ? .5f : index / static_cast<float>(rayCount - 1);
+            float angle = (light.angle + (light.mode == EmitterMode::Point  ? index * 360.f / rayCount
+                                          : light.mode == EmitterMode::Wall ? 0.f
+                                                                            : (fraction - .5f) * light.spread)) *
+                          DEG2RAD;
+            Vector2 origin = emitterRayOrigin(light, fraction);
             for (size_t band = 0; band < spectrum.size() && rays.size() < 120000; ++band) {
-                auto path = traceRay(light.position, {std::cos(angle), std::sin(angle)}, scene.surfaces, light.bounces,
+                auto path = traceRay(origin, {std::cos(angle), std::sin(angle)}, scene.surfaces, light.bounces,
                                      scene.prisms, spectrum[band].wavelength, scene.partialReflections);
                 for (auto segment : path) {
                     segment.source = source;

@@ -21,6 +21,7 @@ enum class Kind { Detector, Prism, Splitter, Mirror, Wall, Laser };
 struct Widget {
     int y, action;
     float minimum, maximum;
+    int x = 20, width = 340;
 };
 
 struct Meter {
@@ -39,9 +40,8 @@ struct Meter {
 
     void dragSlider(int x) {
         if (activeSlider.action)
-            apply(activeSlider.action, activeSlider.minimum +
-                      std::clamp((x - 20) / 340.f, 0.f, 1.f) *
-                          (activeSlider.maximum - activeSlider.minimum));
+            apply(activeSlider.action, activeSlider.minimum + std::clamp((x - 20) / 340.f, 0.f, 1.f) *
+                                                                  (activeSlider.maximum - activeSlider.minimum));
     }
 
     bool sync(App& target) {
@@ -80,16 +80,34 @@ struct Meter {
     void apply(int action, float value) {
         if (!app)
             return;
+        if (isLengthControl(action))
+            value = fromCentimeters(value);
+        if (action == 35) {
+            app->eraseObject(id);
+            return;
+        }
         for (auto& p : app->scene.prisms)
             if (p.id == id) {
+                if (action == 33)
+                    p.flipped = !p.flipped;
                 if (action == 1)
                     p.apex = value;
                 if (action == 2)
                     p.angle = value;
                 if (action == 3)
                     p.radius = value;
-                if (action >= 4 && action <= 6)
+                if (action == 36) {
+                    p.thickness = lensThickness(p);
+                    p.radius = value / 2;
+                }
+                if (action == 37)
+                    p.thickness = value;
+                if (action >= 4 && action <= 6) {
                     p.glass = static_cast<Glass>(action - 4);
+                    p.customIndex = 0;
+                }
+                if (action == 34)
+                    p.customIndex = std::clamp(value, 1.f, 2.5f);
                 if (action == 7)
                     app->scene.partialReflections = !app->scene.partialReflections;
                 p = fitPrism(p);
@@ -136,6 +154,14 @@ struct Meter {
                     light.mode = EmitterMode::Beam;
                 if (action == 31)
                     light.mode = EmitterMode::Point;
+                if (action == 38) {
+                    light.mode = EmitterMode::Wall;
+                    if (light.rayCount < 2)
+                        light.rayCount = 9;
+                }
+                if (action == 39)
+                    light.width = value;
+                light = fitEmitter(light);
             }
         sync(*app);
     }
@@ -156,11 +182,18 @@ struct DetectorWindows::Impl {
     }
 
     void draw(Meter& m, Drawable target = 0) {
-        if (!target)
-            target = m.window;
+        XWindowAttributes bounds{};
+        if (!XGetWindowAttributes(display, m.window, &bounds) || bounds.width <= 0 || bounds.height <= 0)
+            return;
+        // Present one completed frame. Drawing directly into the window lets the
+        // compositor show the background clear between individual text/shape requests.
+        const bool present = target == 0;
+        if (present)
+            target = XCreatePixmap(display, m.window, bounds.width, bounds.height, bounds.depth);
         GC gc = XCreateGC(display, target, 0, nullptr);
+        XSetGraphicsExposures(display, gc, False);
         XSetForeground(display, gc, 0x121a27);
-        XFillRectangle(display, target, gc, 0, 0, 1600, 1600);
+        XFillRectangle(display, target, gc, 0, 0, bounds.width, bounds.height);
         auto text = [&](int x, int y, const std::string& label) {
             XSetForeground(display, gc, 0xe4ecf7);
             XDrawString(display, target, gc, x, y, label.c_str(), label.size());
@@ -168,8 +201,25 @@ struct DetectorWindows::Impl {
         text(20, 30, "Light Lab 2D - Object " + std::to_string(m.number));
         int y = 65;
         m.widgets.clear();
+        int deleteX = bounds.width - 90;
+        XSetForeground(display, gc, 0xa32d40);
+        XFillRectangle(display, target, gc, deleteX, 12, 70, 26);
+        XSetForeground(display, gc, 0xf27080);
+        XDrawRectangle(display, target, gc, deleteX, 12, 70, 26);
+        text(deleteX + 14, 29, "Delete");
+        m.widgets.push_back({12, 35, 0, 0, deleteX, 70});
         auto control = [&](const std::string& label, int action, float value, float low, float high) {
-            text(20, y, label + ": " + std::to_string(static_cast<int>(value)));
+            const bool length = isLengthControl(action);
+            if (length) {
+                value = toCentimeters(value);
+                low = toCentimeters(low);
+                high = toCentimeters(high);
+            }
+            std::string formatted = length                   ? TextFormat("%.2f cm", value)
+                                    : action == 34           ? TextFormat("%.3f", value)
+                                    : isAngleControl(action) ? TextFormat("%.1f deg", value)
+                                                             : std::to_string(static_cast<int>(value));
+            text(20, y, label + ": " + formatted);
             XSetForeground(display, gc, 0x2b3a4e);
             XFillRectangle(display, target, gc, 20, y + 8, 340, 14);
             XSetForeground(display, gc, 0x1990a2);
@@ -178,38 +228,74 @@ struct DetectorWindows::Impl {
             m.widgets.push_back({y + 8, action, low, high});
             y += 52;
         };
-        auto button = [&](const std::string& label, int action) {
-            text(20, y + 12, label);
+        auto button = [&](const std::string& label, int action, bool chosen = false) {
+            XSetForeground(display, gc, chosen ? 0x176b78 : 0x1f2e41);
+            XFillRectangle(display, target, gc, 20, y, 340, 20);
+            XSetForeground(display, gc, chosen ? 0x58e8c7 : 0x52667f);
+            XDrawRectangle(display, target, gc, 20, y, 340, 20);
+            text(30, y + 14, label);
             m.widgets.push_back({y, action, 0, 0});
             y += 30;
         };
         if (m.kind == Kind::Laser) {
             control("Direction", 14, m.emitter.angle, -180, 180);
-            control("Spread", 15, m.emitter.spread, 0, 120);
-            control("Rays", 16, m.emitter.rayCount, 1, 240);
+            if (m.emitter.mode == EmitterMode::Wall)
+                control("Width", 39, m.emitter.width, 8, 400);
+            else
+                control("Spread", 15, m.emitter.spread, 0, 120);
+            control("Rays", 16, m.emitter.rayCount, m.emitter.mode == EmitterMode::Wall ? 2 : 1, 240);
             control("Reflections", 17, m.emitter.bounces, 0, 12);
             button(m.emitter.sweep ? "Sweep: on" : "Sweep: off", 32);
             button("Beam mode", 30);
             button("Point mode", 31);
+            button("Laser wall mode", 38);
             for (int i = 0; i < 7; ++i)
                 button(colorNames[i], 20 + i);
         } else if (m.kind == Kind::Prism) {
-            control("Apex", 1, m.prism.apex, 15, 150);
+            if (m.prism.lens == LensShape::Prism)
+                control("Apex", 1, m.prism.apex, 20, 100);
+            else {
+                text(20, y, lensName(m.prism.lens));
+                y += 30;
+            }
             control("Rotation", 2, m.prism.angle, -180, 180);
-            control("Size", 3, m.prism.radius, 20, 250);
-            button("Flint glass", 4);
-            button("Crown glass", 5);
-            button("Water", 6);
-            button(m.reflections ? "Fresnel reflections: on" : "Fresnel reflections: off", 7);
+            if (m.prism.lens == LensShape::Prism)
+                control("Radius", 3, m.prism.radius, 24, 210);
+            else {
+                control("Length", 36, 2 * m.prism.radius, 48, 420);
+                control("Thickness (center)", 37, lensThickness(m.prism), minimumLensThickness(m.prism), 300);
+            }
+            y += 12;
+            for (int i = 0; i < 3; ++i) {
+                std::string label = std::string(i == 0   ? "Flint"
+                                                : i == 1 ? "Crown"
+                                                         : "Water") +
+                                    TextFormat(" (n=%.3f)", glassIndex(589, static_cast<Glass>(i)));
+                button(label, 4 + i, m.prism.customIndex == 0 && m.prism.glass == static_cast<Glass>(i));
+                y += 8;
+            }
+            y += 16;
+            control("n (589 nm)", 34, objectIndex(589, m.prism), 1, 2.5f);
+            y += 12;
+            button(m.reflections ? "Fresnel reflections (all glass): on" : "Fresnel reflections (all glass): off", 7,
+                   m.reflections);
+            if (m.prism.lens == LensShape::PlanoConvex || m.prism.lens == LensShape::PlanoConcave ||
+                m.prism.lens == LensShape::PositiveMeniscus || m.prism.lens == LensShape::NegativeMeniscus)
+                button("Flip", 33, m.prism.flipped);
         } else {
-            control("Length", 12, surfaceLength(m.surface), 8, 650);
+            control("Length", 12, surfaceLength(m.surface), 8, maximumSurfaceLength());
             control("Rotation", 13,
                     std::atan2(m.surface.end.y - m.surface.start.y, m.surface.end.x - m.surface.start.x) * RAD2DEG,
                     -180, 180);
             if (m.kind == Kind::Splitter)
                 control("Reflected percent", 8, m.surface.reflectivity * 100, 0, 100);
+
+            if (m.kind == Kind::Mirror) {
+                text(20, y, "Mirror reflectance: 82% (fixed)");
+                y += 22;
+            }
             if (m.kind == Kind::Detector) {
-                text(20, y, "Received power: " + std::to_string(m.reading.power * 100) + "%");
+                text(20, y, TextFormat("Received: %.2f%% of total emitted power", m.reading.power * 100));
                 y += 30;
                 for (auto band : m.reading.spectrum) {
                     text(20, y, std::to_string(static_cast<int>(band.wavelength)) + " nm");
@@ -219,6 +305,26 @@ struct DetectorWindows::Impl {
                     y += 22;
                 }
             }
+        }
+        if (m.kind == Kind::Prism) {
+            text(20, y + 18,
+                 m.prism.customIndex != 0        ? "Custom n: shifted material dispersion"
+                 : m.prism.glass == Glass::Water ? "Water: approximate Cauchy model"
+                                                 : "Glass: catalog Sellmeier model");
+        }
+        if (m.kind == Kind::Prism && m.prism.lens != LensShape::Prism) {
+            auto radii = lensRadiiCm(m.prism);
+            std::string r1 = std::isinf(radii[0]) ? "flat" : TextFormat("%.2f cm", radii[0]);
+            std::string r2 = std::isinf(radii[1]) ? "flat" : TextFormat("%.2f cm", radii[1]);
+            text(20, y + 38, "R1: " + r1 + " / R2: " + r2);
+            float focal = paraxialFocalLengthCm(m.prism);
+            text(20, y + 58,
+                 std::isinf(focal) ? "Paraxial f (589 nm): infinity"
+                                   : TextFormat("Paraxial f (589 nm): %+.2f cm", focal));
+        }
+        if (present) {
+            XCopyArea(display, target, m.window, gc, 0, 0, bounds.width, bounds.height, 0, 0);
+            XFreePixmap(display, target);
         }
         XFreeGC(display, gc);
     }
@@ -276,9 +382,10 @@ void DetectorWindows::update(App& app) {
             }
             if (event.type == ButtonPress && event.xbutton.button == Button1) {
                 for (auto w : m.widgets)
-                    if (event.xbutton.y >= w.y && event.xbutton.y <= w.y + 20 && event.xbutton.x >= 20 &&
-                        event.xbutton.x <= 360) {
-                        app.checkpoint();
+                    if (event.xbutton.y >= w.y && event.xbutton.y <= w.y + (w.action == 35 ? 26 : 20) &&
+                        event.xbutton.x >= w.x && event.xbutton.x <= w.x + w.width) {
+                        if (w.action != 35)
+                            app.checkpoint();
                         if (w.maximum > w.minimum)
                             m.activeSlider = w;
                         m.apply(w.action, w.minimum + std::clamp((event.xbutton.x - 20) / 340.f, 0.f, 1.f) *

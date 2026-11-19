@@ -3,7 +3,11 @@
 
 ARGS ?=
 
-.PHONY: run build test clean help
+.PHONY: run build test clean full help
+
+full:
+	$(MAKE) clean
+	$(MAKE) run
 
 ifeq ($(OS),Windows_NT)
 SHELL := cmd.exe
@@ -86,4 +90,5 @@ help:
 	@echo make build       Build without launching
 	@echo make test        Build and run all checks
 	@echo make clean       Remove build outputs
+	@echo make full        Clean, rebuild and launch
 	@echo make ARGS=--prism Build and launch the prism demo

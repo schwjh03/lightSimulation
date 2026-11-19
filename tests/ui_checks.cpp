@@ -12,7 +12,7 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
     auto move = [](float x, float y) { return Pointer{{x, y}, false, true, false}; };
     auto release = [](float x, float y) { return Pointer{{x, y}, false, false, true}; };
     steps = {
-        {"select mirror tool", click(452, 37), [this] { return app.tool == Tool::Mirror; }},
+        {"select mirror tool", click(406, 37), [this] { return app.tool == Tool::Mirror; }},
         {"begin mirror", click(710, 300), [] { return true; }},
         {"extend mirror", move(750, 450), [] { return true; }},
         {"finish mirror", release(750, 450), [this] { return app.scene.surfaces.size() == 5 && app.selected == 4; }},
@@ -28,7 +28,7 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
         {"relay preset", click(140, 137),
          [this] { return app.scene.preset == Preset::Relay && app.scene.surfaces.size() == 3; }},
         {"blank preset", click(217, 137), [this] { return app.scene.surfaces.empty(); }},
-        {"wall tool", click(565, 37), [this] { return app.tool == Tool::Wall; }},
+        {"wall tool", click(492, 37), [this] { return app.tool == Tool::Wall; }},
         {"begin wall", click(1000, 350), [] { return true; }},
         {"extend wall", move(1000, 550), [] { return true; }},
         {"finish wall", release(1000, 550),
@@ -53,7 +53,21 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
         {"release beam", release(560, 366), [] { return true; }},
         {"final room reset", click(59, 137),
          [this] { return app.scene.preset == Preset::Room && app.scene.surfaces.size() == 4; }},
-        {"prism tool", click(682, 37), [this] { return app.tool == Tool::Prism; }},
+        {"lens dropdown", click(844, 37), [] { return true; }},
+        {"choose plano-convex", click(910, 110), [this] { return app.tool == Tool::Lens; }},
+        {"begin lens", click(880, 322), [] { return true; }},
+        {"place lens", release(880, 322),
+         [this] { return app.scene.prisms.size() == 1 && app.scene.prisms[0].lens == LensShape::PlanoConvex; }},
+        {"select lens", click(880, 322), [this] { return app.selected == -3; }},
+        {"release lens", release(880, 322), [] { return true; }},
+        {"delete lens", click(237, 740), [this] { return app.scene.prisms.empty(); }},
+        {"lens testing scene", click(140, 210),
+         [this] {
+             return app.scene.preset == Preset::LensTesting && app.scene.lasers.size() == 1 &&
+                    app.scene.prisms.size() == 6;
+         }},
+        {"restore room after lens testing", click(59, 137), [this] { return app.scene.prisms.empty(); }},
+        {"prism tool", click(578, 37), [this] { return app.tool == Tool::Prism; }},
         {"begin prism", click(880, 322), [] { return true; }},
         {"place prism", release(880, 322),
          [this] { return app.scene.prisms.size() == 1 && app.selected == -3 && app.tool == Tool::Select; }},
@@ -81,7 +95,7 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
          [this] { return Vector2Distance(app.scene.lasers[0].position, {130, 225}) < .1f; }},
         {"release laser housing", release(370, 297), [] { return true; }},
         {"restore prism demo", click(80, 169), [this] { return app.scene.lasers[0].colorIndex == 5; }},
-        {"detector tool", click(835, 37), [this] { return app.tool == Tool::Detector; }},
+        {"detector tool", click(750, 37), [this] { return app.tool == Tool::Detector; }},
         {"begin detector", click(1180, 580), [] { return true; }},
         {"draw detector", move(1180, 720), [] { return true; }},
         {"finish detector", release(1180, 720),
@@ -115,7 +129,7 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
         {"hidden grid pauses background", release(1175, 35), [this] { return app.backgroundTime == pausedBackground; }},
         {"grid restores animated dots", click(1175, 35), [this] { return app.scene.grid; }},
         {"visible grid always animates", release(1175, 35), [this] { return app.backgroundTime > pausedBackground; }},
-        {"splitter drawing tool", click(736, 37), [this] { return app.tool == Tool::Splitter; }},
+        {"splitter drawing tool", click(664, 37), [this] { return app.tool == Tool::Splitter; }},
         {"begin new splitter", click(580, 622), [] { return true; }},
         {"draw new splitter", move(630, 672), [] { return true; }},
         {"finish new splitter", release(630, 672),
@@ -129,14 +143,14 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
         {"save as action", click(1065, 37), [this] { return app.saveAsRequested; }},
         {"prism demo is grouped with starters", click(80, 169),
          [this] { return app.scene.preset == Preset::Dispersion; }},
-        {"add laser tool", click(140, 250), [this] { return app.tool == Tool::Laser; }},
+        {"add laser tool", click(78, 250), [this] { return app.tool == Tool::Laser; }},
         {"begin second laser", click(450, 520), [] { return true; }},
         {"place second laser", release(450, 520),
          [this] {
              return app.scene.lasers.size() == 2 && app.selectedLaser == 1 && app.scene.lasers[0].colorIndex == 5 &&
                     app.scene.lasers[1].colorIndex == 1;
          }},
-        {"add third laser tool", click(140, 250), [this] { return app.tool == Tool::Laser; }},
+        {"add third laser tool", click(78, 250), [this] { return app.tool == Tool::Laser; }},
         {"begin aimed third laser", click(530, 560), [] { return true; }},
         {"aim third laser while placing", move(600, 530), [] { return true; }},
         {"finish third laser", release(600, 530),
@@ -164,7 +178,23 @@ UiChecks::UiChecks(App& target, bool test) : app(target), enabled(test) {
         {"remove next laser", click(237, 740), [this] { return app.scene.lasers.size() == 1; }},
         {"select last laser for removal", click(140, 374), [] { return true; }},
         {"remove last laser", click(237, 740), [this] { return app.scene.lasers.empty() && app.rays.empty(); }},
-        {"add into empty scene", click(140, 250), [this] { return app.tool == Tool::Laser; }},
+        {"add laser wall tool", click(200, 250), [this] { return app.tool == Tool::LaserWall; }},
+        {"begin laser wall", click(480, 424), [] { return true; }},
+        {"place laser wall", release(480, 424),
+         [this] {
+             return app.scene.lasers.size() == 1 && app.scene.lasers[0].mode == EmitterMode::Wall &&
+                    app.scene.lasers[0].rayCount == 9;
+         }},
+        {"grab wall away from center", click(472, 454), [this] { return app.selected == -2; }},
+        {"move laser wall", move(512, 454), [this] { return std::abs(app.scene.lasers[0].position.x - 240) < .1f; }},
+        {"release laser wall", release(512, 454), [] { return true; }},
+        {"delete laser wall", click(237, 740), [this] { return app.scene.lasers.empty(); }},
+        {"undo laser wall deletion", click(1132, 35),
+         [this] { return app.scene.lasers.size() == 1 && app.scene.lasers[0].mode == EmitterMode::Wall; }},
+        {"select restored wall", click(520, 424), [this] { return app.selected == -2; }},
+        {"release restored wall", release(520, 424), [] { return true; }},
+        {"remove restored wall", click(237, 740), [this] { return app.scene.lasers.empty(); }},
+        {"add into empty scene", click(78, 250), [this] { return app.tool == Tool::Laser; }},
         {"begin replacement laser", click(500, 500), [] { return true; }},
         {"finish replacement laser", release(500, 500),
          [this] { return app.scene.lasers.size() == 1 && app.selectedLaser == 0; }}};

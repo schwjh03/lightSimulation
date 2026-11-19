@@ -18,9 +18,9 @@ App::App(bool testSession) : testing(testSession) {
     const char* dataHome = std::getenv("XDG_DATA_HOME");
     const char* home = std::getenv("HOME");
     auto directory = dataHome && *dataHome && std::filesystem::path(dataHome).is_absolute()
-        ? std::filesystem::path(dataHome) / "LightLab2D"
-        : (home ? std::filesystem::path(home) / ".local/share/LightLab2D"
-                : std::filesystem::path(GetApplicationDirectory()) / "LightLab2D");
+                         ? std::filesystem::path(dataHome) / "LightLab2D"
+                         : (home ? std::filesystem::path(home) / ".local/share/LightLab2D"
+                                 : std::filesystem::path(GetApplicationDirectory()) / "LightLab2D");
 #endif
     library = std::make_unique<SceneLibrary>(directory);
     if (library->restore(scene)) {
@@ -140,6 +140,30 @@ void App::requestDetectorWindow(int surfaceIndex) {
     }
 }
 
+void App::eraseObject(std::uint64_t id) {
+    // Inspectors identify their own object, independently of canvas selection.
+    for (size_t i = 0; i < scene.lasers.size(); ++i)
+        if (scene.lasers[i].id == id) {
+            selected = -2;
+            selectedLaser = static_cast<int>(i);
+            eraseSelection();
+            return;
+        }
+    for (size_t i = 0; i < scene.prisms.size(); ++i)
+        if (scene.prisms[i].id == id) {
+            selected = -3;
+            selectedPrism = static_cast<int>(i);
+            eraseSelection();
+            return;
+        }
+    for (size_t i = 0; i < scene.surfaces.size(); ++i)
+        if (scene.surfaces[i].id == id) {
+            selected = static_cast<int>(i);
+            eraseSelection();
+            return;
+        }
+}
+
 void App::eraseSelection() {
     if (selected == -2 && selectedLaser >= 0 && selectedLaser < static_cast<int>(scene.lasers.size())) {
         checkpoint();
@@ -186,13 +210,15 @@ void App::choosePreset(Preset preset) {
 void App::handleCanvas() {
     const Pointer& pointer = ui.pointer;
     Vector2 point = keepInside({pointer.position.x - canvas.x, pointer.position.y - canvas.y});
+    if (lensMenuOpen)
+        return;
     if (pointer.pressed && ui.hovered(canvas)) {
         anchor = point;
         pointerMoved = false;
-        if (tool == Tool::Laser) {
+        if (tool == Tool::Laser || tool == Tool::LaserWall) {
             drag = Drag::CreateLaser;
             draftEnd = point;
-        } else if (tool == Tool::Prism) {
+        } else if (tool == Tool::Prism || tool == Tool::Lens) {
             drag = Drag::CreatePrism;
             draftEnd = point;
         } else if (tool != Tool::Select) {
@@ -208,7 +234,7 @@ void App::handleCanvas() {
                 Vector2 aim =
                     Vector2Add(light.position,
                                Vector2Scale({std::cos(light.angle * DEG2RAD), std::sin(light.angle * DEG2RAD)}, 46));
-                if (light.mode == EmitterMode::Beam && Vector2Distance(point, aim) < 10) {
+                if (light.mode != EmitterMode::Point && Vector2Distance(point, aim) < 10) {
                     selected = -2;
                     selectedLaser = activeLaser;
                     drag = Drag::Direction;
@@ -221,7 +247,9 @@ void App::handleCanvas() {
                 float along = Vector2DotProduct(relative, direction);
                 float across = std::abs(relative.x * direction.y - relative.y * direction.x);
                 bool onBody = light.mode == EmitterMode::Beam && along >= -54 && along <= 6 && across < 17;
-                if (Vector2Distance(point, light.position) < 17 || onBody) {
+                bool onWall =
+                    light.mode == EmitterMode::Wall && along >= -18 && along <= 8 && across <= light.width / 2 + 8;
+                if (Vector2Distance(point, light.position) < 17 || onBody || onWall) {
                     selected = -2;
                     selectedLaser = i;
                     drag = Drag::Source;
@@ -248,7 +276,7 @@ void App::handleCanvas() {
                         const auto& prism = scene.prisms[i];
                         auto vertices = prismVertices(prism);
                         int corner = -1;
-                        for (int j = 0; j < 3; ++j)
+                        for (int j = 0; j < (prism.lens == LensShape::Prism ? 3 : 0); ++j)
                             if (Vector2Distance(point, vertices[j]) < 13)
                                 corner = j;
                         if (corner < 0 && !insidePrism(point, prism) && Vector2Distance(point, prism.center) >= 12)
@@ -273,10 +301,12 @@ void App::handleCanvas() {
     if (pointer.down) {
         if (drag == Drag::Source && selectedLaser >= 0 && selectedLaser < static_cast<int>(scene.lasers.size())) {
             scene.lasers[selectedLaser].position = keepInside(Vector2Add(point, sourceGrabOffset));
+            scene.lasers[selectedLaser] = fitEmitter(scene.lasers[selectedLaser]);
         }
         if (drag == Drag::Direction && selectedLaser >= 0 && selectedLaser < static_cast<int>(scene.lasers.size())) {
             Vector2 direction = Vector2Subtract(point, scene.lasers[selectedLaser].position);
             scene.lasers[selectedLaser].angle = std::atan2(direction.y, direction.x) * RAD2DEG;
+            scene.lasers[selectedLaser] = fitEmitter(scene.lasers[selectedLaser]);
         }
         if (drag == Drag::Create || drag == Drag::CreatePrism || drag == Drag::CreateLaser) {
             draftEnd = point;
@@ -324,11 +354,15 @@ void App::handleCanvas() {
                 light.position = anchor;
                 light.angle = 0;
                 light.colorIndex = 1;
-                light.rayCount = 1;
+                light.rayCount = tool == Tool::LaserWall ? 9 : 1;
+                if (tool == Tool::LaserWall) {
+                    light.mode = EmitterMode::Wall;
+                    light.colorIndex = 0;
+                }
                 auto direction = Vector2Subtract(point, anchor);
                 if (Vector2Length(direction) >= 12)
                     light.angle = std::atan2(direction.y, direction.x) * RAD2DEG;
-                scene.lasers.push_back(light);
+                scene.lasers.push_back(fitEmitter(light));
                 selected = -2;
                 selectedLaser = static_cast<int>(scene.lasers.size()) - 1;
                 selectedPrism = -1;
@@ -342,6 +376,11 @@ void App::handleCanvas() {
         if (drag == Drag::CreatePrism && scene.prisms.size() < 16) {
             checkpoint();
             Prism prism;
+            if (tool == Tool::Lens) {
+                prism.lens = lensShape;
+                prism.angle = 0;
+                prism.glass = Glass::Crown;
+            }
             prism.center = anchor;
             auto offset = Vector2Subtract(point, anchor);
             if (Vector2Length(offset) >= 24) {
@@ -352,7 +391,9 @@ void App::handleCanvas() {
             selected = -3;
             selectedPrism = static_cast<int>(scene.prisms.size()) - 1;
             tool = Tool::Select;
-            status = "Prism placed. Drag its body to move; corners resize and rotate.";
+            status = prism.lens == LensShape::Prism
+                         ? "Prism placed. Drag its body to move; corners resize and rotate."
+                         : "Lens placed. Double-click for length, thickness, rotation and material.";
             statusTime = 5;
         }
         if (drag == Drag::Create && Vector2Distance(anchor, point) >= 16 && scene.surfaces.size() < 64) {
@@ -368,8 +409,8 @@ void App::handleCanvas() {
                 tool = Tool::Select;
         }
         std::uint64_t clickedId = 0;
-        if (!pointerMoved && tool == Tool::Select && drag != Drag::None &&
-            drag != Drag::Create && drag != Drag::CreateLaser && drag != Drag::CreatePrism) {
+        if (!pointerMoved && tool == Tool::Select && drag != Drag::None && drag != Drag::Create &&
+            drag != Drag::CreateLaser && drag != Drag::CreatePrism) {
             ensureSurfaceIds();
             if (selected == -2 && selectedLaser >= 0)
                 clickedId = scene.lasers[selectedLaser].id;
@@ -458,6 +499,7 @@ void App::update(float deltaTime) {
     if (IsKeyPressed(KEY_ESCAPE)) {
         drag = Drag::None;
         tool = Tool::Select;
+        lensMenuOpen = false;
     }
     handleCanvas();
     for (size_t i = 0; i < scene.lasers.size(); ++i) {
@@ -468,6 +510,7 @@ void App::update(float deltaTime) {
             light.angle += deltaTime * 24;
             if (light.angle > 180)
                 light.angle -= 360;
+            light = fitEmitter(light);
         }
     }
 }

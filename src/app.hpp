@@ -6,7 +6,7 @@
 #include <memory>
 
 namespace lightlab {
-enum class Tool { Select, Mirror, Wall, Prism, Splitter, Detector, Laser };
+enum class Tool { Select, Mirror, Wall, Prism, Splitter, Detector, Laser, Lens, LaserWall };
 enum class Drag {
     None,
     Source,
@@ -34,6 +34,7 @@ public:
     void checkpoint();
     void undo();
     void eraseSelection();
+    void eraseObject(std::uint64_t id);
     void choosePreset(Preset preset);
     void ensureSurfaceIds();
     void requestDetectorWindow(int surfaceIndex);
@@ -53,6 +54,8 @@ public:
 
 private:
     bool testing;
+    bool lensMenuOpen = false;
+    LensShape lensShape = LensShape::Biconvex;
     std::string status = "Ready";
     float statusTime = 0;
     Drag drag = Drag::None;

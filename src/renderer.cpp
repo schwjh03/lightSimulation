@@ -21,6 +21,24 @@ Color surfaceTint(Material material) {
 
 void drawGlass(const Prism& prism, bool selected, bool preview = false) {
     auto points = prismVertices(prism);
+    if (prism.lens != LensShape::Prism) {
+        // Fill strips also cover concave profiles without an invalid triangle fan.
+        for (int i = 0; i < 96; ++i) {
+            auto a = screen(points[i]), b = screen(points[i + 1]);
+            auto c = screen(points[193 - i]), d = screen(points[192 - i]);
+            Color tint{85, 131, 217, static_cast<unsigned char>(preview ? 14 : 28)};
+            if (((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) > 0) {
+                DrawTriangle(a, c, b, tint);
+                DrawTriangle(b, c, d, tint);
+            } else {
+                DrawTriangle(a, b, c, tint);
+                DrawTriangle(b, d, c, tint);
+            }
+        }
+        for (size_t i = 0; i < points.size(); ++i)
+            DrawLineEx(screen(points[i]), screen(points[(i + 1) % points.size()]), 1.5f, Fade(prismColor, .88f));
+        return;
+    }
     auto a = screen(points[0]), b = screen(points[1]), c = screen(points[2]);
     Vector2 shadow{4, 7};
     DrawTriangle(Vector2Add(a, shadow), Vector2Add(c, shadow), Vector2Add(b, shadow), Fade(BLACK, .28f));
@@ -88,7 +106,27 @@ void drawEmitter(const Emitter& light, bool selected) {
     auto along = [&](float distance, float side = 0.f) {
         return Vector2Add(source, Vector2Add(Vector2Scale(direction, distance), Vector2Scale(normal, side)));
     };
-    if (light.mode == EmitterMode::Beam) {
+    if (light.mode == EmitterMode::Wall) {
+        auto a = along(-8, -light.width / 2), b = along(-8, light.width / 2);
+        DrawLineEx(Vector2Add(a, {3, 4}), Vector2Add(b, {3, 4}), 18, Fade(BLACK, .5f));
+        if (selected)
+            DrawLineEx(a, b, 23, Fade(color, .14f));
+        DrawLineEx(a, b, 15, Color{90, 106, 127, 255});
+        DrawLineEx(a, b, 10, Color{32, 45, 63, 255});
+        DrawLineEx(along(-2, -light.width / 2), along(-2, light.width / 2), 3, color);
+        int count = std::min(light.rayCount, 32);
+        for (int i = 0; i < count; ++i) {
+            float side = (count == 1 ? 0.f : i / static_cast<float>(count - 1) - .5f) * light.width;
+            DrawCircleV(along(0, side), 2, color);
+        }
+        if (selected) {
+            auto aim = along(46);
+            DrawLineEx(source, aim, 1, Fade(color, .4f));
+            DrawCircleV(aim, 7, paper);
+            DrawCircleLinesV(aim, 7, color);
+            DrawCircleV(aim, 2, WHITE);
+        }
+    } else if (light.mode == EmitterMode::Beam) {
         if (selected) {
             DrawLineEx(along(-54), along(-3), 34, Fade(color, .14f));
             auto aim = along(46);
@@ -133,7 +171,7 @@ void App::drawToolbar() {
     ui.text("2D OPTICS", 79, 46, 12, muted, true);
 
     for (int i = 0; i < 6; ++i) {
-        Rectangle rect = {300 + i * 98.f, 20, 92, 34};
+        Rectangle rect = {280 + i * 86.f, 20, 80, 34};
         if (ui.button(rect, std::array<const char*, 6>{"Select", "Mirror", "Wall", "Prism", "Splitter", "Detector"}[i],
                       static_cast<int>(tool) == i)) {
             tool = static_cast<Tool>(i);
@@ -144,6 +182,11 @@ void App::drawToolbar() {
                                                  "Draw a beam splitter (S)", "Draw a light detector (D)"}[i]);
     }
 
+    if (ui.button({796, 20, 96, 34}, "Lens v", tool == Tool::Lens)) {
+        lensMenuOpen = !lensMenuOpen;
+        drag = Drag::None;
+    }
+    ui.hint({796, 20, 96, 34}, "Choose a lens, then click or drag on the canvas to place it.");
     if (ui.button({898, 20, 58, 34}, "Open"))
         openRequested = true;
     ui.hint({898, 20, 58, 34}, "Open saved scene (Ctrl+O)");
@@ -185,11 +228,19 @@ void App::drawInspector() {
         choosePreset(Preset::SplitterLab);
     ui.hint({22, 157, 116, 30}, "White light, prism and detector. Current work is saved before switching.");
     ui.hint({144, 157, 114, 30}, "A 50/50 splitter with two detectors. Current work is saved before switching.");
-    ui.text("ADD LIGHTS", 22, 208, 13, muted, true);
-    if (ui.button({22, 233, 236, 38}, "Add laser (L)", tool == Tool::Laser, scene.lasers.size() < maxLasers)) {
+    if (ui.button({22, 195, 236, 30}, "Lense testing",
+                  scene.preset == Preset::LensTesting && (!library || library->currentPath().empty())))
+        choosePreset(Preset::LensTesting);
+    ui.hint({22, 195, 236, 30}, "All six lens variants and one laser. Current work is saved before switching.");
+    if (ui.button({22, 233, 112, 38}, "Laser (L)", tool == Tool::Laser, scene.lasers.size() < maxLasers)) {
         tool = Tool::Laser;
         drag = Drag::None;
     }
+    if (ui.button({140, 233, 118, 38}, "Laser wall", tool == Tool::LaserWall, scene.lasers.size() < maxLasers)) {
+        tool = Tool::LaserWall;
+        drag = Drag::None;
+    }
+    ui.hint({140, 233, 118, 38}, "Place a wall of parallel beams. Double-click to set width in cm and beam count.");
     ui.text("Click the canvas to place a laser.", 22, 285, 15, ink);
     ui.text("Drag while placing to set its direction.", 22, 307, 13, muted);
     ui.text("LASERS", 22, 334, 12, muted, true);
@@ -210,7 +261,8 @@ void App::drawInspector() {
             requestSelectionWindow();
         }
         DrawRectangle(static_cast<int>(rect.x + 7), static_cast<int>(rect.y + 8), 4, 18, lightColors[light.colorIndex]);
-        ui.text("Laser " + std::to_string(index + 1), rect.x + 21, rect.y + 7, 16, ink, true);
+        ui.text(std::string(light.mode == EmitterMode::Wall ? "Wall " : "Laser ") + std::to_string(index + 1),
+                rect.x + 21, rect.y + 7, 16, ink, true);
         std::string color = colorNames[light.colorIndex];
         color = color.substr(0, color.find('/'));
         ui.text(color, rect.x + 115, rect.y + 8, 14, lightColors[light.colorIndex]);
@@ -227,12 +279,15 @@ void App::drawInspector() {
     }
     DrawLine(22, 699, 258, 699, border);
     ui.text("SELECTION", 22, 714, 11, muted, true);
-    std::string label = selected == -2 ? "Laser " + std::to_string(selectedLaser + 1) : "None";
+    std::string label =
+        selected == -2 ? std::string(scene.lasers[selectedLaser].mode == EmitterMode::Wall ? "Laser wall " : "Laser ") +
+                             std::to_string(selectedLaser + 1)
+                       : "None";
     if (selected >= 0) {
         label = std::string(materialName(scene.surfaces[selected].material)) + " " + std::to_string(selected + 1);
     }
     if (selected == -3)
-        label = "Glass prism";
+        label = scene.prisms[selectedPrism].lens == LensShape::Prism ? "Glass prism" : "Lens";
     ui.text(label, 22, 735, 21, ink, true);
     if (selected != -1) {
         if (ui.button({145, 733, 65, 25}, "Open"))
@@ -328,10 +383,10 @@ void App::drawCanvas() {
     for (size_t i = 0; i < scene.prisms.size(); ++i) {
         auto vertices = prismVertices(scene.prisms[i]);
         const bool active = selected == -3 && selectedPrism == static_cast<int>(i);
-        for (int corner = 0; corner < 3; ++corner) {
-            auto a = screen(vertices[corner]), b = screen(vertices[(corner + 1) % 3]);
+        for (int corner = 0; corner < static_cast<int>(vertices.size()); ++corner) {
+            auto a = screen(vertices[corner]), b = screen(vertices[(corner + 1) % vertices.size()]);
             DrawLineEx(a, b, 1.25f, Fade(prismColor, .8f));
-            if (active) {
+            if (active && scene.prisms[i].lens == LensShape::Prism) {
                 DrawCircleV(a, 7, paper);
                 DrawCircleLinesV(a, 7, prismColor);
                 DrawCircleV(a, 2, WHITE);
@@ -343,7 +398,9 @@ void App::drawCanvas() {
             DrawLineEx({center.x - 4, center.y}, {center.x + 4, center.y}, 1, prismColor);
             DrawLineEx({center.x, center.y - 4}, {center.x, center.y + 4}, 1, prismColor);
         }
-        ui.center(glassName(scene.prisms[i].glass), center.x, center.y + 25, 11, Fade(prismColor, .65f));
+        ui.center(scene.prisms[i].lens == LensShape::Prism ? glassName(scene.prisms[i].glass)
+                                                           : lensName(scene.prisms[i].lens),
+                  center.x, center.y + 25, 11, Fade(prismColor, .65f));
     }
     if (drag == Drag::Create) {
         const Color color = tool == Tool::Mirror     ? mirrorColor
@@ -356,6 +413,11 @@ void App::drawCanvas() {
     }
     if (drag == Drag::CreatePrism) {
         Prism preview;
+        if (tool == Tool::Lens) {
+            preview.lens = lensShape;
+            preview.angle = 0;
+            preview.glass = Glass::Crown;
+        }
         preview.center = anchor;
         auto offset = Vector2Subtract(draftEnd, anchor);
         if (Vector2Length(offset) >= 24) {
@@ -367,29 +429,41 @@ void App::drawCanvas() {
     if (drag == Drag::CreateLaser) {
         Emitter preview;
         preview.position = anchor;
-        preview.colorIndex = 1;
+        preview.colorIndex = tool == Tool::LaserWall ? 0 : 1;
+        if (tool == Tool::LaserWall) {
+            preview.mode = EmitterMode::Wall;
+            preview.rayCount = 9;
+        }
         auto offset = Vector2Subtract(draftEnd, anchor);
         preview.angle = Vector2Length(offset) < 12 ? 0 : std::atan2(offset.y, offset.x) * RAD2DEG;
-        drawEmitter(preview, true);
+        drawEmitter(fitEmitter(preview), true);
     }
     for (size_t i = 0; i < scene.lasers.size(); ++i) {
         drawEmitter(scene.lasers[i], selected == -2 && selectedLaser == static_cast<int>(i));
     }
 
-    ui.text("OPTICAL BENCH", 306, 90, 12, muted, true);
+    ui.text("OPTICAL BENCH / 100 x 70.4 cm", 306, 90, 12, muted, true);
+    ui.hint({306, 90, 330, 18}, "Geometric optics in air (n=1). Dimensions in cm. No diffraction or interference.");
     if (selected == -2 && selectedLaser >= 0 && selectedLaser < static_cast<int>(scene.lasers.size())) {
         const auto& light = scene.lasers[selectedLaser];
-        ui.text("Laser " + std::to_string(selectedLaser + 1) + " / " + colorNames[light.colorIndex], 306, 112, 16,
-                lightColors[light.colorIndex]);
+        ui.text(std::string(light.mode == EmitterMode::Wall ? "Laser wall " : "Laser ") +
+                    std::to_string(selectedLaser + 1) + " / " + colorNames[light.colorIndex],
+                306, 112, 16, lightColors[light.colorIndex]);
     } else
-        ui.text(std::to_string(scene.lasers.size()) + " lasers / click a source for its settings", 306, 112, 16, muted);
+        ui.text(std::to_string(scene.lasers.size()) + " lasers / double-click a source for settings", 306, 112, 16,
+                muted);
     ui.text("MIRROR", 980, 94, 10, mirrorColor, true);
     ui.text("WALL", 1072, 94, 10, wallColor, true);
-    ui.text("PRISM", 1154, 94, 10, prismColor, true);
+    ui.text("GLASS", 1154, 94, 10, prismColor, true);
     DrawRectangleGradientV(280, 721, 1000, 55, Fade(background, 0), Fade(background, .94f));
     const char* hint =
-        tool == Tool::Laser   ? "Click to add a laser. Drag while placing to aim it. Each laser has its own settings."
+        tool == Tool::LaserWall
+            ? "Click to place parallel beams. Drag while placing to aim. Double-click to set width and beam count."
+        : tool == Tool::Laser ? "Click to add a laser. Drag while placing to aim it. Each laser has its own settings."
+        : tool == Tool::Lens  ? "Click to place a lens. Drag to size and rotate. Double-click for settings."
         : tool == Tool::Prism ? "Click to place a prism, or drag from its center to set a corner."
+        : selected == -3 && scene.prisms[selectedPrism].lens != LensShape::Prism
+            ? "LENS / Drag the body to move. Double-click for length, thickness, material and focal data."
         : selected == -3
             ? "PRISM  /  Drag the body to move; corners resize / rotate. Controls open in a separate window."
         : selected >= 0 && scene.surfaces[selected].material == Material::Detector
@@ -407,13 +481,13 @@ void App::drawStatus() {
     if (sceneTitle.size() > 34)
         sceneTitle = sceneTitle.substr(0, 31) + "...";
     ui.text(statusTime > 0 ? status : sceneTitle, 22, 780, 13, muted);
-    ui.text(std::to_string(scene.surfaces.size()) + " surfaces / " + std::to_string(scene.prisms.size()) + " prisms",
+    ui.text(std::to_string(scene.surfaces.size()) + " surfaces / " + std::to_string(scene.prisms.size()) + " glass",
             301, 780, 13, muted);
     ui.text(std::to_string(rays.size()) + " ray segments", 520, 780, 13, muted);
     if (ui.hovered(canvas)) {
-        ui.text("x " + std::to_string(static_cast<int>(ui.pointer.position.x - canvas.x)) + "   y " +
-                    std::to_string(static_cast<int>(ui.pointer.position.y - canvas.y)),
-                1124, 780, 13, muted);
+        ui.text(TextFormat("x %.1f cm   y %.1f cm", toCentimeters(ui.pointer.position.x - canvas.x),
+                           toCentimeters(ui.pointer.position.y - canvas.y)),
+                1070, 780, 13, muted);
     }
 }
 
@@ -426,6 +500,19 @@ void App::render() {
     drawInspector();
     drawCanvas();
     drawStatus();
+    if (lensMenuOpen) {
+        DrawRectangleRounded({796, 58, 240, 224}, .08f, 6, paper);
+        for (int i = 1; i <= 6; ++i) {
+            if (ui.button({802, 64 + (i - 1) * 35.f, 228, 32}, lensName(static_cast<LensShape>(i)),
+                          lensShape == static_cast<LensShape>(i))) {
+                lensShape = static_cast<LensShape>(i);
+                tool = Tool::Lens;
+                lensMenuOpen = false;
+            }
+        }
+        if (ui.pointer.pressed && !CheckCollisionPointRec(ui.pointer.position, {796, 20, 240, 262}))
+            lensMenuOpen = false;
+    }
     ui.finish();
 }
 } // namespace lightlab

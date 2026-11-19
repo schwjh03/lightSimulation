@@ -22,8 +22,278 @@ bool near(Vector2 actual, Vector2 expected) {
     return Vector2Distance(actual, expected) < .1f;
 }
 
+void academicChecks() {
+    // Independent paraxial prediction from the thick-lens matrix in air.
+    // Positive radii have their centers of curvature to the right.
+    for (int shape = 1; shape <= 6; ++shape)
+        for (float halfLength : {60.f, 100.f})
+            for (Glass glass : {Glass::Crown, Glass::Flint})
+                for (float wavelength : {486.1f, 587.6f, 656.3f})
+                    for (bool flipped : {false, true})
+                        for (float extraThickness : {0.f, 30.f}) {
+                            Prism lens;
+                            lens.center = {500, 350};
+                            lens.angle = 0;
+                            lens.radius = halfLength;
+                            lens.lens = static_cast<LensShape>(shape);
+                            lens.glass = glass;
+                            lens.flipped = flipped;
+                            lens.thickness = lensThickness(lens) + extraThickness;
+                            double r1 = 1.65 * toCentimeters(halfLength), r2 = -r1;
+                            if (shape == 2)
+                                r1 = 0;
+                            if (shape == 3) {
+                                r1 = -r1;
+                                r2 = -r2;
+                            }
+                            if (shape == 4) {
+                                r1 = 0;
+                                r2 = -r2;
+                            }
+                            if (shape == 5)
+                                r2 = 2.8 * toCentimeters(halfLength);
+                            if (shape == 6) {
+                                r1 = 2.8 * toCentimeters(halfLength);
+                                r2 = 1.65 * toCentimeters(halfLength);
+                            }
+                            if (flipped) {
+                                double old = r1;
+                                r1 = -r2;
+                                r2 = -old;
+                            }
+                            double c1 = r1 == 0 ? 0 : 1 / r1, c2 = r2 == 0 ? 0 : 1 / r2;
+                            double n = glassIndex(wavelength, glass), d = toCentimeters(lensThickness(lens));
+                            double power = (n - 1) * (c1 - c2 + (n - 1) * d * c1 * c2 / n);
+                            double expected = (1 - (n - 1) * d * c1 / n) / power;
+                            check(std::abs(paraxialFocalLengthCm(lens, wavelength) - 1 / power) < .001,
+                                  "inspector focal readout matches the independent signed-radius formula");
+                            auto rays = traceRay({100, 350.5f}, {1, 0}, {}, 12, {lens}, wavelength, false);
+                            check(rays.size() == 3,
+                                  "academic matrix: entry and exit for every lens/material/orientation");
+                            auto ray = rays.back();
+                            auto out = Vector2Normalize(Vector2Subtract(ray.end, ray.start));
+                            double crossing = ray.start.x + (350 - ray.start.y) * out.x / out.y;
+                            double measured = toCentimeters(crossing - lens.center.x - lensThickness(lens) / 2);
+                            check(std::abs(measured - expected) < std::max(.05, .005 * std::abs(expected)),
+                                  "academic matrix: back focal distance agrees within 0.05 cm or 0.5 percent");
+                            auto reverse = traceRay(Vector2Add(ray.start, Vector2Scale(out, 1)), Vector2Negate(out), {},
+                                                    12, {lens}, wavelength, false);
+                            check(reverse.size() == 3, "academic matrix: reverse ray crosses the same two faces");
+                            auto reverseDirection =
+                                Vector2Normalize(Vector2Subtract(reverse.back().end, reverse.back().start));
+                            check(Vector2Distance(reverseDirection, {-1, 0}) < .0005f,
+                                  "academic matrix: geometric refraction obeys optical reversibility");
+                        }
+    for (float n : {1.333f, 1.5168f, 1.78472f, 2.5f}) {
+        for (int degrees = 0; degrees <= 80; degrees += 5) {
+            float angle = degrees * DEG2RAD;
+            Vector2 incoming{std::cos(angle), std::sin(angle)}, outgoing;
+            check(refractDirection(incoming, {-1, 0}, 1, n, outgoing) &&
+                      std::abs(incoming.y - n * outgoing.y) < .000002f,
+                  "Snell angle sweep satisfies n1 sin(theta1)=n2 sin(theta2)");
+            float reflectance = fresnelReflectance(incoming, {-1, 0}, 1, n);
+            check(std::isfinite(reflectance) && reflectance >= 0 && reflectance <= 1,
+                  "Fresnel angle sweep stays finite and conserves interface power");
+        }
+        float critical = std::asin(1 / n);
+        Vector2 outgoing;
+        float below = critical - .01f * DEG2RAD, above = critical + .01f * DEG2RAD;
+        check(refractDirection({std::cos(below), std::sin(below)}, {-1, 0}, n, 1, outgoing) &&
+                  !refractDirection({std::cos(above), std::sin(above)}, {-1, 0}, n, 1, outgoing),
+              "critical angle transition agrees with asin(n2/n1)");
+    }
+    for (int shape = 1; shape <= 6; ++shape) {
+        Prism lens;
+        lens.center = {500, 350};
+        lens.angle = 0;
+        lens.radius = 80;
+        lens.lens = static_cast<LensShape>(shape);
+        lens.glass = Glass::Crown;
+        auto rays = traceRay({100, 365}, {1, 0}, {}, 12, {lens}, 589, true);
+        float delivered = 0;
+        for (auto ray : rays)
+            if (!ray.hitGlass && !ray.hitMirror)
+                delivered += ray.energy;
+        check(delivered > .998f && delivered <= 1.0001f,
+              "each lens conserves Fresnel power within the documented pruning cutoff");
+    }
+    for (int source = 0; source < 7; ++source) {
+        float weight = 0;
+        for (auto band : sourceSpectrum(source))
+            weight += band.weight;
+        check(std::abs(weight - 1) < .000001f, "every source spectrum has normalized total power");
+    }
+    // SCHOTT N-SF11 datasheet lines F, d, C; rounded catalog values.
+    check(std::abs(glassIndex(486.1f, Glass::Flint) - 1.80651f) < .00003f &&
+              std::abs(glassIndex(656.3f, Glass::Flint) - 1.77596f) < .00003f,
+          "N-SF11 dispersion agrees with independent blue and red catalog reference lines");
+}
+
 int main() {
     try {
+        academicChecks();
+        for (int shape = 1; shape <= 6; ++shape) {
+            Prism lens;
+            lens.center = {500, 350};
+            lens.radius = 100;
+            lens.angle = 0;
+            lens.glass = Glass::Crown;
+            lens.lens = static_cast<LensShape>(shape);
+            for (bool flip : {false, true}) {
+                lens.flipped = flip;
+                auto path = traceRay({100, 375}, {1, 0}, {}, 6, {lens}, 589, false);
+                check(path.size() == 3 && path[0].hitGlass && path[1].hitGlass,
+                      "each lens refracts through both faces in either orientation");
+                auto out = Vector2Normalize(Vector2Subtract(path.back().end, path.back().start));
+                bool converging = shape == 1 || shape == 2 || shape == 5;
+                check(converging ? out.y < -.01f : out.y > .01f,
+                      "lens power has correct sign before and after flipping");
+                check(std::abs(path.back().energy - 1) < .0001f, "transmission conserves energy without reflections");
+                auto axial = traceRay({100, 350}, {1, 0}, {}, 6, {lens}, 589, false);
+                check(axial.size() == 3 && std::abs(axial.back().end.y - 350) < .01f, "axial ray stays on axis");
+                auto missed = traceRay({100, 460}, {1, 0}, {}, 6, {lens}, 589, false);
+                check(missed.size() == 1, "rays outside the aperture miss the lens");
+                float originalThickness = lensThickness(lens);
+                lens.thickness = originalThickness + 60;
+                auto thicker = traceRay({100, 375}, {1, 0}, {}, 6, {lens}, 589, false);
+                check(thicker.size() == 3 && std::abs(lens.radius - 100) < .001f,
+                      "thickness changes preserve aperture and both refracting faces");
+                auto thickerOut = Vector2Normalize(Vector2Subtract(thicker.back().end, thicker.back().start));
+                auto axisCrossing = [](const RaySegment& ray, Vector2 direction) {
+                    return ray.start.x + (350 - ray.start.y) * direction.x / direction.y;
+                };
+                check(std::abs(axisCrossing(thicker.back(), thickerOut) - axisCrossing(path.back(), out)) > .1f,
+                      "physical center thickness changes real or virtual focal position for each lens and flip");
+                Scene saved = makeScene(Preset::Blank), loadedLens;
+                saved.prisms = {lens};
+                check(saveScene(saved, "lens_test.llab") && loadScene(loadedLens, "lens_test.llab") &&
+                          loadedLens.prisms[0].lens == lens.lens && loadedLens.prisms[0].flipped == flip &&
+                          std::abs(loadedLens.prisms[0].thickness - lens.thickness) < .001f,
+                      "lens shape, orientation and thickness survive save and load");
+                std::filesystem::remove("lens_test.llab");
+                lens.thickness = 0;
+            }
+        }
+        {
+            Prism lens;
+            lens.center = {500, 350};
+            lens.angle = 0;
+            lens.lens = LensShape::Biconvex;
+            lens.customIndex = 1;
+            auto neutral = traceRay({100, 375}, {1, 0}, {}, 6, {lens}, 589, false);
+            check(std::abs(neutral.back().end.y - 375) < .01f, "n=1 lens does not bend light");
+            lens.customIndex = 1.9f;
+            auto strong = traceRay({100, 375}, {1, 0}, {}, 6, {lens}, 589, false);
+            check(strong.back().end.y < 375, "custom n controls refraction");
+            Scene saved = makeScene(Preset::Blank), loaded;
+            saved.prisms = {lens};
+            check(saveScene(saved, "index_test.llab") && loadScene(loaded, "index_test.llab") &&
+                      std::abs(loaded.prisms[0].customIndex - 1.9f) < .0001f,
+                  "custom n survives save/load");
+            std::filesystem::remove("index_test.llab");
+        }
+        {
+            auto testing = makeScene(Preset::LensTesting);
+            std::set<int> shapes;
+            for (const auto& lens : testing.prisms)
+                shapes.insert(static_cast<int>(lens.lens));
+            check(testing.lasers.size() == 1 && shapes.size() == 6 && !traceScene(testing).empty(),
+                  "lens testing starter has every lens variant and one working laser");
+            Scene loaded;
+            check(saveScene(testing, "lens_testing.lightscene") && loadScene(loaded, "lens_testing.lightscene") &&
+                      loaded.preset == Preset::LensTesting && loaded.prisms.size() == 6 && loaded.lasers.size() == 1,
+                  "lens testing starter saves and reloads");
+            std::filesystem::remove("lens_testing.lightscene");
+        }
+        {
+            check(std::abs(toCentimeters(fromCentimeters(3.25f)) - 3.25f) < .00001f && fromCentimeters(1) == 10 &&
+                      toCentimeters(worldWidth) == 100,
+                  "centimeter conversions and physical bench scale are consistent");
+            Prism lens;
+            lens.center = {500, 350};
+            lens.radius = fromCentimeters(10);
+            lens.angle = 0;
+            lens.lens = LensShape::Biconvex;
+            lens.glass = Glass::Crown;
+            lens.thickness = fromCentimeters(9);
+            auto rays = traceRay({100, 351}, {1, 0}, {}, 6, {lens}, 589, false);
+            check(rays.size() == 3, "metric test ray crosses both lens faces");
+            auto ray = rays.back();
+            auto direction = Vector2Normalize(Vector2Subtract(ray.end, ray.start));
+            float crossing = ray.start.x + (350 - ray.start.y) * direction.x / direction.y;
+            float backFocal = toCentimeters(crossing - lens.center.x - lensThickness(lens) / 2);
+            float n = glassIndex(589, Glass::Crown), r = toCentimeters(1.65f * lens.radius);
+            float d = toCentimeters(lensThickness(lens));
+            float power = (n - 1) * (2 / r - (n - 1) * d / (n * r * r));
+            float expectedBackFocal = (1 - (n - 1) * d / (n * r)) / power;
+            check(std::abs(backFocal - expectedBackFocal) < .05f,
+                  "ray-traced focal distance agrees with thick-lens formula using centimeter radii and thickness");
+        }
+        {
+            Scene wall = makeScene(Preset::Blank);
+            wall.lasers[0].position = {100, 350};
+            wall.lasers[0].angle = 0;
+            wall.lasers[0].mode = EmitterMode::Wall;
+            wall.lasers[0].width = fromCentimeters(8);
+            wall.lasers[0].rayCount = 9;
+            wall.lasers[0].spread = 80;
+            wall.partialReflections = false;
+            auto rays = traceScene(wall);
+            check(rays.size() == 9, "laser wall creates spatially separated beams even with stored fan spread");
+            for (int i = 0; i < 9; ++i) {
+                check(std::abs(rays[i].start.y - (310 + i * 10)) < .001f &&
+                          std::abs(rays[i].start.y - rays[i].end.y) < .001f,
+                      "laser wall origins span its centimeter width and all beams are parallel");
+            }
+            wall.surfaces = {{{800, 100}, {800, 600}, lightlab::Material::Detector}};
+            for (int count : {2, 9, 240}) {
+                wall.lasers[0].rayCount = count;
+                auto read = readDetectors(wall, traceScene(wall));
+                check(std::abs(read[0].power - 1) < .00001f, "wall beam count does not change total emitted power");
+            }
+            wall.surfaces.clear();
+            wall.lasers[0].rayCount = 9;
+            wall.lasers[0].width = fromCentimeters(2);
+            Prism lens;
+            lens.center = {500, 350};
+            lens.angle = 0;
+            lens.radius = 100;
+            lens.glass = Glass::Crown;
+            lens.lens = LensShape::Biconvex;
+            wall.prisms = {lens};
+            float r = lensRadiiCm(lens)[0], n = objectIndex(589, lens), d = toCentimeters(lensThickness(lens));
+            float back = paraxialFocalLengthCm(lens) * (1 - (n - 1) * d / (n * r));
+            float plane = lens.center.x + lensThickness(lens) / 2 + fromCentimeters(back);
+            rays = traceScene(wall);
+            int exits = 0;
+            for (auto ray : rays)
+                if (!ray.hitGlass && ray.dispersed) {
+                    auto dir = Vector2Normalize(Vector2Subtract(ray.end, ray.start));
+                    float height = ray.start.y + (plane - ray.start.x) * dir.y / dir.x;
+                    check(std::abs(toCentimeters(height - 350)) < .05f,
+                          "parallel near-axis wall beams meet within 0.05 cm at predicted back focal plane");
+                    ++exits;
+                }
+            check(exits == 9, "all wall beams cross a converging lens");
+            Scene loaded;
+            check(saveScene(wall, "wall_test.lightscene") && loadScene(loaded, "wall_test.lightscene") &&
+                      sceneData(wall) == sceneData(loaded),
+                  "laser wall mode, width, beam count and lens survive save/load");
+            std::filesystem::remove("wall_test.lightscene");
+            for (float angle : {0.f, 30.f, 90.f, -90.f, 180.f}) {
+                Emitter edge = wall.lasers[0];
+                edge.position = {12, 12};
+                edge.width = 400;
+                edge.angle = angle;
+                edge = fitEmitter(edge);
+                for (float fraction : {0.f, 1.f}) {
+                    auto origin = emitterRayOrigin(edge, fraction);
+                    check(origin.x >= 11.99f && origin.y >= 11.99f && origin.x <= worldWidth - 11.99f &&
+                              origin.y <= worldHeight - 11.99f,
+                          "rotated wall endpoints remain inside the bench");
+                }
+            }
+        }
         auto empty = traceRay({100, 100}, {1, 0}, {}, 6);
         check(empty.size() == 1 && near(empty[0].end, {1000, 100}), "ray terminates at canvas");
         std::vector<Surface> surfaces = {{{500, 50}, {500, 500}, lightlab::Material::Mirror}};

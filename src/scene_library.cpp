@@ -41,6 +41,8 @@ const char* presetName(Preset preset) {
         return "Blank";
     case Preset::Dispersion:
         return "Prism Demo";
+    case Preset::LensTesting:
+        return "Lense testing";
     default:
         return "Splitter Lab";
     }

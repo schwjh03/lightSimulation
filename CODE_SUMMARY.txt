@@ -1,0 +1,400 @@
+LIGHT LAB 2D - CODE AND FILE GUIDE
+================================
+
+PROJECT OVERVIEW
+
+Light Lab 2D is a native C++17 optics sandbox for Windows and Linux. You
+place and aim lasers, draw mirrors and absorbing walls, add glass prisms
+and beam splitters, and measure light with detectors. raylib provides the
+main window, drawing, input, and some geometry operations; raymath supplies
+vector mathematics. Separate object inspector windows use native OS APIs.
+
+The simulation uses geometric rays. Each ray can carry a wavelength and
+relative power. Prisms bend different wavelengths differently, splitters
+divide power, mirrors reflect it, and walls/detectors absorb it. Detector
+percentages represent normalized source power, rather than calibrated watts.
+
+HOW THE PROGRAM FITS TOGETHER
+
+1. main.cpp calls runWindow() in runtime.cpp.
+2. runWindow() initializes raylib, constructs App, and starts the frame loop.
+3. App::update() handles keyboard shortcuts, canvas dragging, and laser sweep.
+4. App::render() draws the interface and scene. Its drawCanvas() function
+   calls traceScene() and readDetectors() to calculate current light paths
+   and measurements before drawing them.
+5. Platform-specific code handles Open/Save dialogs and updates independent
+   object inspector windows.
+6. On exit, the app preserves the session and releases windows and graphics.
+
+The .hpp files primarily declare types and functions. The .cpp files provide
+their implementations. Most project code is inside namespace lightlab.
+
+SOURCE FILES
+============
+
+src/main.cpp
+  The executable's entry point.
+  - main(argc, argv): forwards command-line arguments to lightlab::runWindow()
+    and returns its exit code.
+
+src/runtime.cpp
+  Owns application startup, the main loop, and shutdown.
+  - runWindow(): parses options, initializes the window, loads a render
+    texture and fonts, and runs updates and rendering until exit.
+  It draws the interface at a logical 1280 x 800 resolution and scales it
+  to fit the actual window. Mouse positions are converted back into those
+  logical coordinates so controls keep working after resizing.
+  Command-line options include --prism, --relay, --splitter, --multi,
+  --point, --color, --small, --capture, and --smoke-test. Several demo and
+  capture options enable testing mode, which avoids normal session storage.
+  The smoke-test path runs UI checks and native inspector checks.
+
+src/app.hpp
+  Declares the central App class and interaction state.
+  - Tool: identifies the active selection or placement tool.
+  - Drag: distinguishes moving a source, aiming, dragging surface endpoints,
+    moving/resizing prisms, and creating objects.
+  - App: holds the Scene, UI, selection, traced rays, detector readings,
+    scene library, history, and pending dialog/window requests.
+  - HistoryEntry: saves both scene contents and the associated save context.
+  Selection values: -1 means nothing, -2 means a laser, -3 means a prism;
+  nonnegative values identify entries in scene.surfaces.
+
+src/app.cpp
+  Implements editing behavior and connects user actions to scene storage.
+  - App::App(): creates the scene library and restores previous work unless
+    this is a test session. Uses LOCALAPPDATA on Windows and XDG_DATA_HOME
+    or ~/.local/share on Linux.
+  - update(deltaTime): processes shortcuts, advances the animated background,
+    handles canvas input, and rotates lasers whose sweep is enabled.
+  - handleCanvas(): handles picking objects, dragging, aiming, creation,
+    resizing, and double-click requests for separate inspectors.
+  - checkpoint(): records an undo snapshot, retaining up to 40 entries.
+  - undo(): restores the previous scene and its save context.
+  - eraseSelection(): removes the selected laser, prism, or surface.
+  - choosePreset(): preserves current work, then installs a starter scene.
+  - ensureSurfaceIds(): assigns runtime IDs to lasers, prisms, and surfaces.
+    Despite its name, it covers all three object categories. IDs let native
+    windows follow objects when vector indices change.
+  - requestSelectionWindow()/requestDetectorWindow(): queue inspector requests.
+  - save()/saveNamed()/openNamed(): coordinate saving and opening, selection
+    resets, undo history, and user-visible status messages.
+  - saveSession(): preserves work and startup information on exit.
+
+src/renderer.cpp
+  Implements App's main-window drawing functions; it has no separate header
+  because those methods are already declared in app.hpp.
+  - screen(): converts world coordinates into interface coordinates.
+  - surfaceTint(): chooses a material's display color.
+  - drawGlass(): draws a translucent prism and its visual details.
+  - drawHardware(): draws mirrors, walls, splitters, and detectors.
+  - drawEmitter(): draws a laser or point source and selection details.
+  - App::drawToolbar(): draws editing tools, save/open actions, undo, and grid.
+  - App::drawInspector(): draws the sidebar's presets, laser list, view
+    settings, and selection controls. Detailed editing uses separate windows.
+  - App::drawCanvas(): calculates rays/readings and draws the animated grid,
+    prisms, glowing beams, normal vectors, hardware, badges, and previews.
+  - App::drawStatus(): shows scene/status text, object/ray counts, and pointer
+    coordinates.
+  - App::render(): draws the full interface in order and finishes tooltips.
+  Some UI controls act during drawing, so rendering also processes clicks.
+
+src/scene.hpp
+  Defines the simulation's data model and geometry/storage declarations.
+  - Material: Mirror, Absorber, Splitter, or Detector.
+  - Glass: Flint, Crown, or Water.
+  - EmitterMode: directional Beam or radial Point source.
+  - Preset: Room, Relay, Blank, Dispersion, or SplitterLab.
+  - Surface: line endpoints, material, splitter reflectivity, and runtime ID.
+  - Prism: center, radius, rotation, apex angle, material, and runtime ID.
+  - Emitter: position, angle, spread, ray count, bounce limit, color, mode,
+    sweep setting, and runtime ID.
+  - Scene: collections of objects plus preset and display/physics settings.
+  The simulation world is 1000 x 704 units. The maximum laser count is 16.
+
+src/scene.cpp
+  Implements starter scenes, geometry helpers, and the text scene format.
+  - makeScene(preset): builds the requested starter arrangement.
+  - keepInside(point): clamps a point inside the canvas with a margin.
+  - surfaceLength(): calculates the distance between a surface's endpoints.
+  - prismVertices(): computes a prism's three corners from its parameters.
+  - prismCornerOffset(): gives a corner's angular offset.
+  - insidePrism(): tests whether a point lies inside the triangle.
+  - fitPrism(): limits size/apex/rotation and moves the prism inside the world.
+  - glassName()/materialName(): provide readable labels.
+  - sceneData(): serializes a scene to the current LIGHT_LAB_2D version 4
+    text format with enough precision to preserve float values.
+  - saveScene(): writes that serialized text to a file.
+  - loadScene(): reads versions 1 through 4, checks counts, enum values,
+    coordinates, and numeric ranges, and only replaces the supplied scene
+    after successful parsing. Runtime IDs are not serialized.
+
+src/optics.hpp
+  Declares the optical calculations and their result types.
+  - RaySegment: one straight section of a light path, including endpoints,
+    collision normal, energy, wavelength, display color, source index,
+    struck surface, and relative power.
+  - SpectralBand: a wavelength and its weight.
+  - DetectorReading: total received power, strongest wavelength, and spectrum.
+
+src/optics.cpp
+  Implements the ray tracer and detector calculations.
+  - sourceSpectrum(colorIndex): maps a source color to physical wavelength
+    samples. Cyan and purple use two bands; white uses 15 equally weighted
+    samples from 420 to 700 nm.
+  - wavelengthColor(): converts a wavelength into an approximate screen color.
+  - glassIndex(): calculates a wavelength-dependent refractive index using
+    Sellmeier equations for flint/crown and an illustrative water model.
+  - refractDirection(): applies Snell's law using vectors; returns false
+    when total internal reflection prevents transmission.
+  - fresnelReflectance(): computes the reflected fraction for unpolarized
+    light crossing an interface between refractive indices.
+  - traceRay(): repeatedly finds the nearest surface, prism edge, or world
+    boundary. It reflects mirrors, refracts glass, branches partial
+    reflections/splitters, and stops rays at absorbers/detectors. Mirrors
+    retain 82% of incoming energy per reflection. Energy, bounce, step,
+    and segment limits keep tracing bounded.
+  - traceScene(): emits rays for each laser and spectral band, traces their
+    paths, assigns source indices, and normalizes physical power across
+    lasers, angular rays, and spectrum weights. Display visibility/color
+    handling keeps overlapping bands visually combined before dispersion.
+  - readDetectors(): totals ray power at each detector, combines matching
+    wavelength bands, sorts the spectrum, and finds its strongest band.
+    The returned vector is indexed by surface index, including empty readings
+    for surfaces that are not detectors.
+
+src/ui.hpp
+  Declares reusable immediate-mode UI controls and shared display colors.
+  - Pointer: logical mouse position and pressed/down/released states.
+  - Ui: font resources, pointer state, buttons, toggles, sliders, and tooltips.
+  Also defines source-color labels and the application's color palette.
+
+src/ui.cpp
+  Implements the custom raylib UI widgets.
+  - load()/unload(): load Segoe UI on Windows or DejaVu Sans on Linux, fall
+    back to raylib's default font, and release owned font resources.
+  - begin(): resets per-frame tooltip/cursor state and inactive slider state.
+  - text()/center(): draw left-aligned or horizontally centered text.
+  - hovered(): checks whether the pointer lies inside a rectangle.
+  - button()/toggle(): draw controls and report a press to the caller.
+    toggle() reports interaction; the caller changes the actual boolean.
+  - slider(): tracks a named active slider, updates a referenced value during
+    dragging, clamps it to its range, and reports whether it changed.
+  - hint()/finish(): collect and draw a tooltip and choose the mouse cursor.
+
+src/detector_windows.hpp
+  Declares the platform-independent native inspector manager. Although named
+  DetectorWindows, it supports lasers, prisms, mirrors, walls, and splitters
+  as well as detector spectra.
+  - update(app): synchronizes windows and processes pending opening requests.
+  - closeAll()/count(): close all inspectors or report their number.
+  - nativeHandle(): returns an object's OS window handle for integration/tests.
+  - displayedPower(): exposes the detector reading displayed by a window.
+  - captureFirst()/captureWindow(): save inspector images for inspection/tests.
+  A private Impl hides OS-specific details behind a unique_ptr.
+
+src/detector_windows.cpp
+  Windows implementation of the inspector manager using Win32/GDI.
+  - Meter::sync(): locates an object by runtime ID and copies current data.
+  - Meter::apply(): applies inspector edits to the matching scene object.
+  - Meter::adjust(): translates pointer position into a slider value.
+  - Meter::prepareFonts()/draw(): prepare DPI-aware text and paint controls,
+    object properties, and detector spectra.
+  - meterProcedure(): handles native messages such as painting, mouse input,
+    resizing, and closing.
+  - Impl::find()/open(): locate or create an object's inspector.
+  - DetectorWindows::update(): refreshes readings, opens requested inspectors,
+    and removes windows whose objects no longer exist.
+  Also implements window capture and inspector lifetime management.
+
+src/detector_windows_linux.cpp
+  Linux implementation of the same manager using X11, compiled only when
+  _WIN32 is not defined.
+  - Meter::sync()/apply(): match objects by ID and synchronize/apply edits.
+  - Meter::dragSlider(): converts horizontal movement into a bounded value.
+  - Impl::draw(): paints native inspector controls and spectra.
+  - DetectorWindows::update(): opens requested windows, handles X11 input,
+    updates inspectors, and closes inspectors for removed objects.
+  Implements the same handle, power, capture, count, and cleanup operations
+  exposed by detector_windows.hpp.
+
+src/native_windows.hpp
+  Wraps Windows headers and renames/undefines conflicting API identifiers.
+  This lets Win32 declarations coexist with raylib names such as Rectangle,
+  CloseWindow, ShowCursor, and DrawText. It has no application functions.
+
+src/scene_dialogs.hpp
+  Declares processSceneDialogs(App&, void* owner), the shared entry point
+  for platform-specific Open and Save As dialogs.
+
+src/scene_dialogs.cpp
+  Windows dialog implementation.
+  - processSceneDialogs(): consumes App's dialog request flags, configures
+    an OPENFILENAMEW dialog, and calls app.openNamed() or app.saveNamed()
+    if the user chooses a path. Cancelling leaves the scene intact.
+
+src/scene_dialogs_linux.cpp
+  Linux dialog implementation, excluded on Windows by a preprocessor guard.
+  - processSceneDialogs(): launches zenity with fork()/execlp(), reads the
+    selected path through a pipe, waits for completion, and delegates the
+    actual load/save to App. Reports a warning if zenity is unavailable.
+
+src/scene_library.hpp
+  Declares SceneLibrary, the layer above individual scene serialization.
+  It manages named scene files, recovery files, active save paths, dirty
+  state, and startup restoration.
+  - SceneContext: active path and baseline serialization, used for undo.
+  - currentPath()/scenesDirectory()/error(): expose library information.
+
+src/scene_library.cpp
+  Implements preservation of work across saves, scene changes, and restarts.
+  - presetName(): supplies readable preset names.
+  - replaceFile(): replaces a destination using an OS-appropriate operation.
+  - sameFile(): compares file identity, with normalized-path fallback.
+  - uniquePath(): creates an unused name for an automatically saved scene.
+  - atomicSave(): writes a temporary file, then replaces the destination;
+    handles write/replacement failure without replacing the previous file.
+  - writeRecovery(): writes scene.txt and session.txt startup information.
+  - restore(): loads the last named scene or recovery scene and handles
+    migration/import of older recovery-only saves.
+  - modified(): compares current serialization with the stored baseline.
+  - saveAs(): writes a named scene and updates active path/baseline/recovery;
+    protects reserved session filenames from being used as named saves.
+  - preserve(): updates the active named scene or gives edited unnamed work
+    a unique timestamped name.
+  - open(): validates a target, preserves current work, then loads it.
+  - begin()/finish(): establish a fresh scene context or preserve on exit.
+  - title()/savedScenes(): provide a display name and sorted saved-file list.
+  - context()/restoreContext(): save/restore library state for undo.
+
+TEST FILES
+==========
+
+tests/optics_tests.cpp
+  Standalone executable for numerical optics, geometry, detector behavior,
+  and scene serialization checks.
+  - check(): records whether an assertion passed and prints its label.
+  - near(): compares 2D coordinates with a tolerance.
+  - main(): constructs test scenarios and checks their results.
+
+tests/scene_library_tests.cpp
+  Standalone persistence tests using a temporary directory.
+  - main(): checks named saves, preserving work during scene changes,
+    reopening, independent copies, restart restoration, undo contexts,
+    invalid files, failed writes, legacy recovery, Unicode filenames,
+    multiple lasers, and protection of reserved recovery paths.
+  Removes its temporary test directory after success or failure.
+
+tests/ui_checks.hpp
+  Declares UiChecks and its Step structure. Each step contains a label,
+  simulated pointer state, and a verification callback.
+
+tests/ui_checks.cpp
+  Implements scripted interface smoke tests run inside the main frame loop.
+  - UiChecks::UiChecks(): builds a sequence of clicks, drags, and checks for
+    tools, creation/deletion/undo, source aiming, prisms, detectors, presets,
+    grid animation, file actions, and multiple lasers.
+  - beforeFrame(): supplies the next scripted pointer input.
+  - afterFrame(): checks the resulting state and writes the report.
+  - done()/result(): tell runtime.cpp when to stop and which code to return.
+
+tests/detector_window_checks.hpp
+  Declares runDetectorWindowChecks(), shared by both platform implementations.
+
+tests/detector_window_checks.cpp
+  Windows native inspector integration tests.
+  - runDetectorWindowChecks(): exercises inspector behavior using real native
+    windows and messages, including live readings and object interactions.
+  Produces a detector-window-checks.txt report and capture artifacts.
+
+tests/detector_window_checks_linux.cpp
+  Linux/X11 native inspector integration tests.
+  - runDetectorWindowChecks(): checks independent windows, hidden-window
+    capture, live readings, splitter changes, deletion/undo, laser inspectors,
+    slider dragging/clamping/release, undoing a drag, and scene replacement.
+  Writes detector-window-checks.txt.
+
+BUILD, DOCUMENTATION, AND CONFIGURATION FILES
+===========================================
+
+Makefile
+  Main build/run/test entry point; the default target builds and launches.
+  - make build: compiles the application without launching it.
+  - make run: builds and runs, forwarding ARGS to the executable.
+  - make test-core (Linux): runs optics and scene-library test executables.
+  - make test: runs core checks and the application's GUI smoke tests.
+  - make clean: removes generated build outputs.
+  On Windows it delegates to build.ps1. On Linux it uses a system raylib
+  discovered through pkg-config or downloads/builds raylib 5.5 with CMake.
+  Linux links X11 and excludes the Windows-only implementation files.
+
+build.ps1
+  Windows build script. Finds a MinGW-w64 C++17 compiler, compiles the app,
+  links the bundled Windows raylib archive and Windows system libraries,
+  and normally copies the executable into the project root.
+  -Test also builds/runs core tests and the hidden GUI smoke test.
+  -NoPublish leaves the root executable untouched and builds under build/.
+
+make.ps1
+  PowerShell convenience wrapper that finds mingw32-make.exe or make.exe,
+  runs it from the project directory, and forwards arguments/errors.
+
+README.md
+  User-facing overview, setup/build/test instructions, controls, saving and
+  reopening behavior, optics explanations, and usage examples.
+
+THIRD_PARTY.md
+  Documents raylib 5.5, its license, included files, and runtime system-font use.
+
+.clang-format
+  C++ formatting configuration based on LLVM style, with four-space indents
+  and a 120-column limit.
+
+.gitignore
+  Excludes generated build outputs, executables, editor settings, captures,
+  and saved scene/session files from version control.
+
+.vscode/c_cpp_properties.json
+  Local VS Code C++ configuration selecting g++, C++17, and include paths.
+  The .vscode directory is ignored by Git.
+
+THIRD-PARTY AND GENERATED FILES
+===============================
+
+vendor/raylib/include/raylib.h
+  Third-party API declarations for windows, input, images, drawing, fonts,
+  textures, and collision helpers. Used throughout the application.
+
+vendor/raylib/include/raymath.h
+  Third-party mathematics helpers, including vector normalization, distance,
+  reflection, dot products, addition, and scaling.
+
+vendor/raylib/lib/libraylib.a
+  Bundled precompiled Windows x64 static raylib library. It is binary code,
+  not a project source file; Linux builds use a native library instead.
+
+vendor/raylib/LICENSE
+  The third-party raylib license notice.
+
+LightLab2D
+  Generated Linux application executable currently present in the root.
+
+build/
+  Generated executables, downloaded/built dependencies, reports, and captures.
+  These are build artifacts; their individual generated files are not
+  application modules and are not catalogued here.
+
+.git/
+  Git's internal repository metadata, not application source.
+
+CODE_SUMMARY.txt
+  This file: a guide to the project files and their important functions.
+
+SUGGESTED READING ORDER
+=======================
+
+Read scene.hpp to learn the data structures, then main.cpp/runtime.cpp to
+understand execution. Read app.hpp/app.cpp for editing, optics.hpp/optics.cpp
+for the simulation, and renderer.cpp/ui.cpp for drawing. Finish with the
+scene library and native window implementations for persistence/platform
+details. The tests provide concrete examples of expected behavior.
